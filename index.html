@@ -158,8 +158,9 @@ header{display:flex;justify-content:space-between;align-items:center;padding:.25
 
 /* GRAPH CANVAS */
 .graph-wrap{background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);
-  overflow:hidden;position:relative;margin-top:.5rem;height:200px}
-canvas#graph-canvas{display:block;width:100%;touch-action:none}
+  overflow:hidden;position:relative;margin-top:.5rem;height:260px}
+canvas#graph-canvas{display:block;width:100%;touch-action:none;cursor:grab}
+canvas#graph-canvas:active{cursor:grabbing}
 .graph-controls{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin-top:.5rem}
 .graph-controls input{flex:1;min-width:120px;font-family:var(--mf);font-size:.85rem;
   background:var(--surface2);border:1px solid var(--border);border-radius:var(--rs);
@@ -277,6 +278,7 @@ const ME = {
     tan:x=>Math.tan(x*Math.PI/180),
     asin:x=>Math.asin(x)*180/Math.PI, acos:x=>Math.acos(x)*180/Math.PI,
     atan:x=>Math.atan(x)*180/Math.PI,
+    asinr:Math.asin, acosr:Math.acos, atanr:Math.atan,
     sinr:Math.sin, cosr:Math.cos, tanr:Math.tan,
     log:Math.log10, ln:Math.log, log2:Math.log2,
     abs:Math.abs, ceil:Math.ceil, floor:Math.floor,
@@ -291,7 +293,7 @@ const ME = {
     const toks=[]; let i=0;
     const s=expr.replace(/\s+/g,'').replace(/π/g,'pi').replace(/×/g,'*').replace(/÷/g,'/');
     while(i<s.length){
-      const m=s.slice(i).match(/^(sqrt|cbrt|sinr|cosr|tanr|asin|acos|atan|sin|cos|tan|log2|log|ln|abs|ceil|floor|round|exp|fact|sign|trunc)/i);
+      const m=s.slice(i).match(/^(sqrt|cbrt|sinr|cosr|tanr|asinr|acosr|atanr|asin|acos|atan|sin|cos|tan|log2|log|ln|abs|ceil|floor|round|exp|fact|sign|trunc)/i);
       if(m){toks.push({t:'fn',v:m[0].toLowerCase()});i+=m[0].length;continue}
       const nm=s.slice(i).match(/^(pi|e|x)\b/i);
       if(nm){toks.push({t:'const',v:nm[0].toLowerCase()});i+=nm[0].length;continue}
@@ -328,11 +330,34 @@ const ME = {
     if(!expr.trim())return{result:0,error:null};
     try{
       const raw=this.tokenise(expr);
+
+      // ── Implicit function parens: sin x / sinx / sin2x → sin(x) / sin(x) / sin(2x)
+      // When a fn token is NOT followed by '(', wrap the next atom in parens.
+      const withParens=[];
+      for(let i=0;i<raw.length;i++){
+        const tok=raw[i];
+        if(tok.t==='fn' && !(raw[i+1]&&raw[i+1].t==='op'&&raw[i+1].v==='(')){
+          // Collect the argument: one atom (num/const) optionally preceded by unary minus,
+          // or a parenthesised group already handled later.
+          withParens.push(tok);
+          withParens.push({t:'op',v:'('});
+          // consume optional unary sign
+          if(raw[i+1]&&raw[i+1].t==='op'&&(raw[i+1].v==='-'||raw[i+1].v==='+'))
+            withParens.push(raw[++i]);
+          // consume one atom
+          if(i+1<raw.length&&(raw[i+1].t==='num'||raw[i+1].t==='const'))
+            withParens.push(raw[++i]);
+          withParens.push({t:'op',v:')'});
+        } else {
+          withParens.push(tok);
+        }
+      }
+
       // insert implicit multiply
       const toks=[];
-      raw.forEach((tok,i)=>{
+      withParens.forEach((tok,i)=>{
         toks.push(tok);
-        const next=raw[i+1];
+        const next=withParens[i+1];
         if(!next)return;
         const lIsVal=tok.t==='num'||tok.t==='const'||(tok.t==='op'&&tok.v===')');
         const rIsVal=next.t==='fn'||next.t==='const'||next.t==='num'||(next.t==='op'&&next.v==='(');
@@ -744,77 +769,571 @@ function esc(s){
 }
 
 // ══════════════════════════════════════════════
-// GRAPH ENGINE — FIX: use reduce instead of spread for large arrays
+// GRAPH ENGINE — GraphEngine class
+// Desmos-standard: adaptive subdivision +
+// discontinuity detection + multi-graph support
 // ══════════════════════════════════════════════
-function drawGraph(){
+
+class GraphEngine {
+  constructor(canvas, ME) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext('2d');
+    this.ME = ME;
+
+    this.graphs = new Map();
+    // viewBox initialised from app state; updated by pan/zoom
+    this.viewBox = { xMin: -10, xMax: 10, yMin: -10, yMax: 10 };
+
+    this.pixelRatio = window.devicePixelRatio || 1;
+    this._needsUpdate = true;
+    this._renderPending = false;
+
+    // Precision controls (Desmos-level)
+    this.maxDepth = 12;
+
+    this.colors = ['#7c6af7','#ec4899','#10b981','#f59e0b','#3b82f6'];
+
+    this._resizeObserver = new ResizeObserver(() => this.resize());
+    this._resizeObserver.observe(canvas);
+    this.resize();
+    this.setupInteractions();
+  }
+
+  // ── Helpers ──────────────────────────────────
+
+  _niceStep(range, targetTicks) {
+    const raw = range / targetTicks;
+    const mag = Math.pow(10, Math.floor(Math.log10(Math.abs(raw) || 1)));
+    const norm = raw / mag;
+    const s = norm < 1.5 ? 1 : norm < 3.5 ? 2 : norm < 7.5 ? 5 : 10;
+    return s * mag;
+  }
+
+  _colors() {
+    const isDark = _s.theme === 'dark';
+    return {
+      bg:     isDark ? '#111118' : '#f8f8ff',
+      grid:   isDark ? 'rgba(255,255,255,.06)' : 'rgba(0,0,0,.07)',
+      axis:   isDark ? 'rgba(255,255,255,.35)'  : 'rgba(0,0,0,.4)',
+      label:  isDark ? 'rgba(200,200,230,.55)'  : 'rgba(60,60,100,.6)',
+      origin: isDark ? 'rgba(124,106,247,.5)'   : 'rgba(124,106,247,.7)',
+    };
+  }
+
+  xToPx(x, w) {
+    return ((x - this.viewBox.xMin) / (this.viewBox.xMax - this.viewBox.xMin)) * w;
+  }
+
+  yToPy(y, h) {
+    return h - ((y - this.viewBox.yMin) / (this.viewBox.yMax - this.viewBox.yMin)) * h;
+  }
+
+  pxToX(px, w) {
+    return this.viewBox.xMin + (px / w) * (this.viewBox.xMax - this.viewBox.xMin);
+  }
+
+  pyToY(py, h) {
+    return this.viewBox.yMax - (py / h) * (this.viewBox.yMax - this.viewBox.yMin);
+  }
+
+  // ── Resize ───────────────────────────────────
+
+  resize() {
+    const rect = this.canvas.getBoundingClientRect();
+    this.canvas.width  = rect.width  * this.pixelRatio;
+    this.canvas.height = rect.height * this.pixelRatio;
+    this.ctx.setTransform(1, 0, 0, 1, 0, 0);
+    this.ctx.scale(this.pixelRatio, this.pixelRatio);
+    this.invalidate();
+  }
+
+  // ── Graph management ─────────────────────────
+
+  /** Add or replace a graph. Returns the id. */
+  setGraph(fn, type = 'explicit', opt = {}) {
+    const id = opt.id || 'default';
+    this.graphs.set(id, {
+      fn, type,
+      color: opt.color || this.colors[0],
+      visible: true,
+      segments: []
+    });
+    this.invalidate();
+    return id;
+  }
+
+  clearGraphs() {
+    this.graphs.clear();
+    this.invalidate();
+  }
+
+  // ── Sampling ─────────────────────────────────
+
+  // Rewrite bare sin/cos/tan → sinr/cosr/tanr so the graph always uses radians.
+  // asin/acos/atan are also converted to their radian-output forms.
+  // sinr/cosr/tanr pass-through untouched (user explicitly chose radians).
+  // The calculator tabs are unaffected — they call ME.evaluate directly.
+  _toRadFn(expr) {
+    // Replace inverse trig FIRST so 'asin' isn't partially matched by /sin/.
+    // asin/acos/atan → asinr/acosr/atanr (radian-output versions in ME.FNS).
+    // sin/cos/tan  → sinr/cosr/tanr.
+    // sinr/cosr/tanr already radians — the (?!r) lookahead leaves them alone.
+    return expr
+      .replace(/\basin\b/g,   'asinr')
+      .replace(/\bacos\b/g,   'acosr')
+      .replace(/\batan\b/g,   'atanr')
+      .replace(/\bsin\b(?!r)/g, 'sinr')
+      .replace(/\bcos\b(?!r)/g, 'cosr')
+      .replace(/\btan\b(?!r)/g, 'tanr');
+  }
+
+  evalSafe(fn, x) {
+    const radFn = this._toRadFn(fn);
+    const { result, error } = this.ME.evaluate(radFn, x);
+    if (error || result === null || result === undefined || !isFinite(result) || isNaN(result))
+      return null;
+    return result;
+  }
+
+  // Convert a math-space point to pixel space
+  _toPx(x, y, w, h) {
+    const { xMin, xMax, yMin, yMax } = this.viewBox;
+    return [
+      ((x - xMin) / (xMax - xMin)) * w,
+      h - ((y - yMin) / (yMax - yMin)) * h
+    ];
+  }
+
+  /**
+   * Adaptive subdivision — all error thresholds in PIXEL space.
+   * Returns array of {x,y} math-space points, or null on domain gap.
+   * Discontinuity is detected AFTER subdivision at the caller level.
+   */
+  subdivide(fn, x1, y1, x2, y2, depth, w, h) {
+    if (depth > this.maxDepth) {
+      return [{ x: x1, y: y1 }, { x: x2, y: y2 }];
+    }
+
+    const midX = (x1 + x2) / 2;
+    const midY = this.evalSafe(fn, midX);
+    if (midY === null) return null; // domain gap inside this interval
+
+    const [px1, py1] = this._toPx(x1, y1, w, h);
+    const [px2, py2] = this._toPx(x2, y2, w, h);
+    const [pxm, pym] = this._toPx(midX, midY, w, h);
+
+    // How far is the actual midpoint from the straight-line midpoint in pixels?
+    const errPx = Math.hypot(pxm - (px1+px2)/2, pym - (py1+py2)/2);
+
+    if (errPx < 0.4) {
+      // Flat enough — no refinement needed
+      return [{ x: x1, y: y1 }, { x: x2, y: y2 }];
+    }
+
+    const left  = this.subdivide(fn, x1,   y1,   midX, midY, depth + 1, w, h);
+    const right = this.subdivide(fn, midX, midY,  x2,   y2,  depth + 1, w, h);
+
+    if (!left || !right) return null;
+
+    // left[-1] == right[0] == midpoint, dedupe
+    return [...left, ...right.slice(1)];
+  }
+
+  computeExplicit(fn) {
+    const rect = this.canvas.getBoundingClientRect();
+    const w = rect.width, h = rect.height;
+    if (!w || !h) return [];
+
+    const segments = [];
+    const { xMin, xMax } = this.viewBox;
+
+    // One coarse sample per ~2 pixels
+    const base = Math.max(100, Math.ceil(w / 2));
+    const dx = (xMax - xMin) / base;
+    let current = [];
+
+    const flush = () => { if (current.length >= 2) segments.push(current); current = []; };
+
+    for (let i = 0; i < base; i++) {
+      const x1 = xMin + i * dx;
+      const x2 = x1 + dx;
+      const y1 = this.evalSafe(fn, x1);
+      const y2 = this.evalSafe(fn, x2);
+
+      if (y1 === null || y2 === null) { flush(); continue; }
+
+      const pts = this.subdivide(fn, x1, y1, x2, y2, 0, w, h);
+
+      if (pts === null) { flush(); continue; }
+
+      // Discontinuity check: pixel jump between last accepted point and new batch
+      if (current.length > 0) {
+        const last = current[current.length - 1];
+        const [lpx, lpy] = this._toPx(last.x, last.y, w, h);
+        const [fpx, fpy] = this._toPx(pts[0].x, pts[0].y, w, h);
+        const dyPx = Math.abs(fpy - lpy);
+        const dxPx = Math.abs(fpx - lpx);
+        // Large vertical jump relative to canvas height and steeper than 45° → asymptote
+        if (dyPx > h * 0.08 && dyPx > dxPx * 2) {
+          flush();
+        }
+      }
+
+      if (current.length === 0) {
+        current.push(...pts);
+      } else {
+        current.push(...pts.slice(1)); // pts[0] duplicates current's last point
+      }
+    }
+
+    flush();
+    return segments;
+  }
+
+
+  computePolar(fn) {
+    const pts = [];
+    for (let t = 0; t <= Math.PI * 2; t += 0.01) {
+      const r = this.evalSafe(fn, t);
+      if (r === null) continue;
+      pts.push({ x: r * Math.cos(t), y: r * Math.sin(t) });
+    }
+    return pts.length ? [pts] : [];
+  }
+
+  updateGraphs() {
+    if (!this._needsUpdate) return;
+    for (const g of this.graphs.values()) {
+      if (!g.visible) continue;
+      g.segments = g.type === 'explicit'
+        ? this.computeExplicit(g.fn)
+        : this.computePolar(g.fn);
+    }
+    this._needsUpdate = false;
+  }
+
+  // ── Auto Y-range ─────────────────────────────
+
+  autoYRange(fn) {
+    const { xMin, xMax } = this.viewBox;
+    const N = 120;
+    const yVals = [];
+    for (let i = 0; i <= N; i++) {
+      const x = xMin + (xMax - xMin) * i / N;
+      const y = this.evalSafe(fn, x);
+      if (y !== null) yVals.push(y);
+    }
+    if (yVals.length > 2) {
+      yVals.sort((a, b) => a - b);
+      const trim = Math.max(1, Math.floor(yVals.length * 0.05));
+      const lo = yVals[trim], hi = yVals[yVals.length - 1 - trim];
+      const pad = (hi - lo) * 0.15 || 2;
+      this.viewBox.yMin = lo - pad;
+      this.viewBox.yMax = hi + pad;
+      if (this.viewBox.yMax - this.viewBox.yMin < 0.01) {
+        this.viewBox.yMin -= 5; this.viewBox.yMax += 5;
+      }
+    } else {
+      this.viewBox.yMin = -10; this.viewBox.yMax = 10;
+    }
+  }
+
+  // ── Render ───────────────────────────────────
+
+  invalidate() {
+    this._needsUpdate = true;
+    this.requestRender();
+  }
+
+  requestRender() {
+    if (this._renderPending) return;
+    this._renderPending = true;
+    requestAnimationFrame(() => {
+      this._renderPending = false;
+      this.updateGraphs();
+      this.render();
+    });
+  }
+
+  render() {
+    const rect = this.canvas.getBoundingClientRect();
+    const w = rect.width, h = rect.height;
+    if (!w || !h) return;
+
+    const ctx = this.ctx;
+    const col = this._colors();
+
+    // Background
+    ctx.fillStyle = col.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    this.drawGrid(w, h, col);
+    this.drawAxes(w, h, col);
+    this.drawAxisLabels(w, h, col);
+
+    // Clip curve drawing to canvas bounds
+    ctx.save();
+    ctx.beginPath(); ctx.rect(0, 0, w, h); ctx.clip();
+    for (const g of this.graphs.values()) {
+      if (g.visible) this.drawGraph(g, w, h);
+    }
+    ctx.restore();
+
+    this.drawWatermark(w, h, col);
+  }
+
+  drawGrid(w, h, col) {
+    const ctx = this.ctx;
+    const { xMin, xMax, yMin, yMax } = this.viewBox;
+    const xStep = this._niceStep(xMax - xMin, 8);
+    const yStep = this._niceStep(yMax - yMin, 6);
+
+    ctx.strokeStyle = col.grid;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+
+    let xg = Math.ceil(xMin / xStep) * xStep;
+    while (xg <= xMax) {
+      const px = this.xToPx(xg, w);
+      ctx.moveTo(px, 0); ctx.lineTo(px, h);
+      xg += xStep;
+    }
+    let yg = Math.ceil(yMin / yStep) * yStep;
+    while (yg <= yMax) {
+      const py = this.yToPy(yg, h);
+      ctx.moveTo(0, py); ctx.lineTo(w, py);
+      yg += yStep;
+    }
+    ctx.stroke();
+  }
+
+  drawAxes(w, h, col) {
+    const ctx = this.ctx;
+    const ax0 = this.xToPx(0, w);
+    const ay0 = this.yToPy(0, h);
+
+    ctx.strokeStyle = col.axis;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    if (ax0 >= 0 && ax0 <= w) { ctx.moveTo(ax0, 0); ctx.lineTo(ax0, h); }
+    if (ay0 >= 0 && ay0 <= h) { ctx.moveTo(0, ay0); ctx.lineTo(w, ay0); }
+    ctx.stroke();
+
+    // Origin dot
+    if (ax0 >= 0 && ax0 <= w && ay0 >= 0 && ay0 <= h) {
+      ctx.fillStyle = col.origin;
+      ctx.beginPath(); ctx.arc(ax0, ay0, 2.5, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  drawAxisLabels(w, h, col) {
+    const ctx = this.ctx;
+    const { xMin, xMax, yMin, yMax } = this.viewBox;
+    const xStep = this._niceStep(xMax - xMin, 8);
+    const yStep = this._niceStep(yMax - yMin, 6);
+    const ax0 = this.xToPx(0, w);
+    const ay0 = this.yToPy(0, h);
+    const dpr = this.pixelRatio;
+
+    ctx.fillStyle = col.label;
+    ctx.font = `${10 * Math.min(dpr, 1.5)}px 'DM Mono',monospace`;
+
+    // X labels
+    ctx.textAlign = 'center'; ctx.textBaseline = 'top';
+    const labelY = Math.min(Math.max(ay0 + 4, 2), h - 14);
+    let xg = Math.ceil(xMin / xStep) * xStep;
+    while (xg <= xMax) {
+      if (Math.abs(xg) > xStep * 0.1)
+        ctx.fillText(parseFloat(xg.toPrecision(4)).toString(), this.xToPx(xg, w), labelY);
+      xg += xStep;
+    }
+
+    // Y labels
+    ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+    const labelX = Math.min(Math.max(ax0 - 4, 22), w - 4);
+    let yg = Math.ceil(yMin / yStep) * yStep;
+    while (yg <= yMax) {
+      if (Math.abs(yg) > yStep * 0.1)
+        ctx.fillText(parseFloat(yg.toPrecision(4)).toString(), labelX, this.yToPy(yg, h));
+      yg += yStep;
+    }
+  }
+
+  drawGraph(g, w, h) {
+    const ctx = this.ctx;
+    ctx.strokeStyle = g.color;
+    ctx.lineWidth = 2.2;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+
+    for (const seg of g.segments) {
+      if (seg.length < 2) continue;
+      ctx.beginPath();
+      ctx.moveTo(this.xToPx(seg[0].x, w), this.yToPy(seg[0].y, h));
+      for (let i = 1; i < seg.length; i++) {
+        ctx.lineTo(this.xToPx(seg[i].x, w), this.yToPy(seg[i].y, h));
+      }
+      ctx.stroke();
+    }
+  }
+
+  drawWatermark(w, h, col) {
+    const { xMin, xMax } = this.viewBox;
+    this.ctx.fillStyle = col.label;
+    this.ctx.font = `9px 'DM Mono',monospace`;
+    this.ctx.textAlign = 'right';
+    this.ctx.textBaseline = 'bottom';
+    this.ctx.fillText(
+      `[${parseFloat(xMin.toPrecision(4))}, ${parseFloat(xMax.toPrecision(4))}]`,
+      w - 6, h - 4
+    );
+  }
+
+  // ── Interaction (pan, zoom, pinch, dbl-click) ─
+
+  setupInteractions() {
+    const canvas = this.canvas;
+    let dragging = false, last = { x: 0, y: 0 };
+    let pinch = null;
+
+    // Mouse drag
+    canvas.addEventListener('mousedown', e => {
+      dragging = true;
+      last = { x: e.clientX, y: e.clientY };
+    }, { passive: true });
+
+    window.addEventListener('mousemove', e => {
+      if (!dragging) return;
+      const rect = canvas.getBoundingClientRect();
+      const dx = (e.clientX - last.x) / rect.width;
+      const dy = (e.clientY - last.y) / rect.height;
+      const xr = this.viewBox.xMax - this.viewBox.xMin;
+      const yr = this.viewBox.yMax - this.viewBox.yMin;
+      this.viewBox.xMin -= dx * xr; this.viewBox.xMax -= dx * xr;
+      this.viewBox.yMin += dy * yr; this.viewBox.yMax += dy * yr;
+      last = { x: e.clientX, y: e.clientY };
+      this._syncInputs();
+      this.invalidate();
+    });
+
+    window.addEventListener('mouseup', () => { dragging = false; });
+
+    // Scroll zoom
+    canvas.addEventListener('wheel', e => {
+      e.preventDefault();
+      const f = e.deltaY > 0 ? 1.1 : 0.9;
+      const rect = canvas.getBoundingClientRect();
+      const mx = this.viewBox.xMin + (e.offsetX / rect.width)  * (this.viewBox.xMax - this.viewBox.xMin);
+      const my = this.viewBox.yMax - (e.offsetY / rect.height) * (this.viewBox.yMax - this.viewBox.yMin);
+      this.viewBox.xMin = mx - (mx - this.viewBox.xMin) * f;
+      this.viewBox.xMax = mx + (this.viewBox.xMax - mx) * f;
+      this.viewBox.yMin = my - (my - this.viewBox.yMin) * f;
+      this.viewBox.yMax = my + (this.viewBox.yMax - my) * f;
+      this._syncInputs();
+      this.invalidate();
+    }, { passive: false });
+
+    // Touch pan
+    canvas.addEventListener('touchstart', e => {
+      if (e.touches.length === 1) {
+        dragging = true;
+        last = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+      } else if (e.touches.length === 2) {
+        dragging = false;
+        pinch = {
+          dist: Math.hypot(
+            e.touches[0].clientX - e.touches[1].clientX,
+            e.touches[0].clientY - e.touches[1].clientY
+          ),
+          vb: { ...this.viewBox }
+        };
+      }
+    }, { passive: true });
+
+    canvas.addEventListener('touchmove', e => {
+      e.preventDefault();
+      if (dragging && e.touches.length === 1) {
+        const rect = canvas.getBoundingClientRect();
+        const dx = (e.touches[0].clientX - last.x) / rect.width;
+        const dy = (e.touches[0].clientY - last.y) / rect.height;
+        const xr = this.viewBox.xMax - this.viewBox.xMin;
+        const yr = this.viewBox.yMax - this.viewBox.yMin;
+        this.viewBox.xMin -= dx * xr; this.viewBox.xMax -= dx * xr;
+        this.viewBox.yMin += dy * yr; this.viewBox.yMax += dy * yr;
+        last = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        this._syncInputs();
+        this.invalidate();
+      } else if (pinch && e.touches.length === 2) {
+        const d = Math.hypot(
+          e.touches[0].clientX - e.touches[1].clientX,
+          e.touches[0].clientY - e.touches[1].clientY
+        );
+        const f = pinch.dist / d;
+        const cx = (pinch.vb.xMin + pinch.vb.xMax) / 2;
+        const cy = (pinch.vb.yMin + pinch.vb.yMax) / 2;
+        const hw = (pinch.vb.xMax - pinch.vb.xMin) / 2 * f;
+        const hh = (pinch.vb.yMax - pinch.vb.yMin) / 2 * f;
+        this.viewBox.xMin = cx - hw; this.viewBox.xMax = cx + hw;
+        this.viewBox.yMin = cy - hh; this.viewBox.yMax = cy + hh;
+        this._syncInputs();
+        this.invalidate();
+      }
+    }, { passive: false });
+
+    canvas.addEventListener('touchend', () => { dragging = false; pinch = null; }, { passive: true });
+
+    // Double-click to reset
+    canvas.addEventListener('dblclick', () => {
+      this.viewBox = { xMin: -10, xMax: 10, yMin: -10, yMax: 10 };
+      _s.graphXmin = -10; _s.graphXmax = 10;
+      const xminEl = document.getElementById('graph-xmin');
+      const xmaxEl = document.getElementById('graph-xmax');
+      if (xminEl) xminEl.value = -10;
+      if (xmaxEl) xmaxEl.value = 10;
+      this.autoYRange(_s.graphFn);
+      this.invalidate();
+    }, { passive: true });
+  }
+
+  /** Push current viewBox back into the x-range input fields + app state. */
+  _syncInputs() {
+    _s.graphXmin = this.viewBox.xMin;
+    _s.graphXmax = this.viewBox.xMax;
+    const xminEl = document.getElementById('graph-xmin');
+    const xmaxEl = document.getElementById('graph-xmax');
+    if (xminEl) xminEl.value = parseFloat(this.viewBox.xMin.toPrecision(5));
+    if (xmaxEl) xmaxEl.value = parseFloat(this.viewBox.xMax.toPrecision(5));
+  }
+}
+
+// ── Singleton instance ───────────────────────
+let _ge = null; // GraphEngine instance, created lazily
+
+/**
+ * drawGraph() — thin shim called by all existing event handlers.
+ * Creates/reuses the GraphEngine singleton, syncs from app state, plots.
+ */
+function drawGraph() {
   const canvas = document.getElementById('graph-canvas');
   if (!canvas) return;
-  const ctx = canvas.getContext('2d');
 
-  // Use devicePixelRatio for sharp rendering on high-res screens
-  const dpr = window.devicePixelRatio || 1;
-  const W = canvas.width = canvas.offsetWidth * dpr;
-  const H = canvas.height = canvas.offsetHeight * dpr;
-  ctx.scale(dpr, dpr);
-  const sw = canvas.offsetWidth;
-  const sh = canvas.offsetHeight;
-
-  const xMin = _s.graphXmin, xMax = _s.graphXmax;
-  const yMin = -10, yMax = 10; // Standard Desmos-style viewport
-
-  // Helper functions to map Math Space to Pixel Space
-  const toPX = (x) => ((x - xMin) / (xMax - xMin)) * sw;
-  const toPY = (y) => sh - ((y - yMin) / (yMax - yMin)) * sh;
-
-  ctx.clearRect(0, 0, sw, sh);
-
-  // 1. Draw Grid & Axes
-  ctx.strokeStyle = _s.theme==='dark'?'rgba(255,255,255,.15)':'rgba(0,0,0,.2)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(0, toPY(0)); ctx.lineTo(sw, toPY(0)); // X-axis
-  ctx.moveTo(toPX(0), 0); ctx.lineTo(toPX(0), sh); // Y-axis
-  ctx.stroke();
-
-  // 2. Draw the Function
-  ctx.strokeStyle = '#7c6af7';
-  ctx.lineWidth = 2.5;
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-
-  let firstPoint = true;
-  let lastY = null;
-
-  // Loop through every single horizontal pixel for maximum smoothness
-  for (let px = 0; px <= sw; px++) {
-    // Convert current pixel to math X
-    const x = xMin + (px / sw) * (xMax - xMin);
-
-    // Evaluate using your math engine
-    const { result, error } = ME.evaluate(_s.graphFn, x);
-
-    // Skip if result is not a valid number (e.g. sqrt(-1))
-    if (error || isNaN(result) || !isFinite(result)) {
-      firstPoint = true; 
-      continue;
-    }
-
-    const py = toPY(result);
-
-    // 3. ASYMPTOTE PROTECTION
-    // If the jump from the last point is huge (e.g. 1/x at 0), lift the pen.
-    if (!firstPoint && Math.abs(py - lastY) > sh * 0.8) {
-      ctx.moveTo(px, py);
-    } else if (firstPoint) {
-      ctx.moveTo(px, py);
-      firstPoint = false;
-    } else {
-      ctx.lineTo(px, py);
-    }
-
-    lastY = py;
+  // Create engine once per canvas element (canvas is replaced on tab switch)
+  if (!_ge || _ge.canvas !== canvas) {
+    _ge = new GraphEngine(canvas, ME);
   }
-  ctx.stroke();
+
+  // Sync viewBox x-range from app state (unless user is mid-pan)
+  _ge.viewBox.xMin = _s.graphXmin;
+  _ge.viewBox.xMax = _s.graphXmax;
+
+  // Auto-fit Y unless the user has manually panned/zoomed Y
+  if (!_ge._userZoomedY) {
+    _ge.autoYRange(_s.graphFn);
+  }
+
+  // Register the current function as the sole graph
+  _ge.setGraph(_s.graphFn, 'explicit', { id: 'main', color: '#7c6af7' });
+  // setGraph already calls invalidate → requestRender
 }
 
 // ══════════════════════════════════════════════
@@ -928,8 +1447,8 @@ function renderGraph(area){
       <input type="number" id="graph-xmax" value="${_s.graphXmax}" placeholder="x max" aria-label="X maximum" style="max-width:90px">
       <button class="graph-btn" data-action="graph-reset">Reset</button>
     </div>
-    <div class="graph-wrap" style="margin-top:.6rem"><canvas id="graph-canvas"></canvas></div>
-    <div class="graph-info">Use x as the variable. Trig uses degrees by default (sinr/cosr/tanr for radians).</div>
+    <div class="graph-wrap" style="margin-top:.6rem;height:260px"><canvas id="graph-canvas"></canvas></div>
+    <div class="graph-info">Use x as the variable. Trig uses radians (sin, cos, tan). For degrees use the ° suffix or multiply by π/180. Scroll to zoom · drag to pan · double-click to reset.</div>
   </div>
   ${renderHistoryHTML()}`;
   setTimeout(drawGraph,30);
@@ -1359,7 +1878,7 @@ function bindEvents(){
         _s.theme=_s.theme==='dark'?'light':'dark';
         document.body.setAttribute('data-theme',_s.theme);
         saveLS('sc3_theme',_s.theme);
-        if(_s.mode==='graph')setTimeout(drawGraph,50);
+        if(_s.mode==='graph'&&_ge) setTimeout(()=>_ge.invalidate(),50);
         break;
       case'copy-result':copyResult();break;
       // FIX: 'key' and 'fn' now both call handleKey() which manages all state correctly
@@ -1402,9 +1921,11 @@ function bindEvents(){
         _s.graphFn=document.getElementById('graph-fn')?.value||'sin(x)';
         _s.graphXmin=parseFloat(document.getElementById('graph-xmin')?.value)||-10;
         _s.graphXmax=parseFloat(document.getElementById('graph-xmax')?.value)||10;
+        if(_ge){ _ge._userZoomedY=false; _ge.viewBox.xMin=_s.graphXmin; _ge.viewBox.xMax=_s.graphXmax; }
         drawGraph();break;
       case'graph-reset':
         _s.graphXmin=-10;_s.graphXmax=10;
+        if(_ge){ _ge._userZoomedY=false; _ge.viewBox={xMin:-10,xMax:10,yMin:-10,yMax:10}; }
         const gxmin=document.getElementById('graph-xmin');const gxmax=document.getElementById('graph-xmax');
         if(gxmin)gxmin.value=-10;if(gxmax)gxmax.value=10;drawGraph();break;
       case'unit-cat':_s.unitCat=v;render();break;
@@ -1467,7 +1988,7 @@ function bindEvents(){
   });
 
   // resize graph
-  window.addEventListener('resize',()=>{if(_s.mode==='graph')drawGraph()});
+  window.addEventListener('resize',()=>{if(_s.mode==='graph'&&_ge)_ge.invalidate()});
 }
 
 // ══════════════════════════════════════════════
