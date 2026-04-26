@@ -666,7 +666,7 @@ function statsCalc(numStr){
 // NUMPAD LAYOUTS
 // ══════════════════════════════════════════════
 function generalKeys(){return[
-  {l:'AC',c:'clear',a:'ac'},{l:'+/−',c:'op',a:'sign'},{l:'%',c:'op',a:'key',v:'%'},{l:'÷',c:'op',a:'key',v:'/'},
+  {l:'AC',c:'clear',a:'ac'},{l:'⌫',c:'clear',a:'del'},{l:'%',c:'op',a:'key',v:'%'},{l:'÷',c:'op',a:'key',v:'/'},
   {l:'7',a:'key',v:'7'},{l:'8',a:'key',v:'8'},{l:'9',a:'key',v:'9'},{l:'×',c:'op',a:'key',v:'*'},
   {l:'4',a:'key',v:'4'},{l:'5',a:'key',v:'5'},{l:'6',a:'key',v:'6'},{l:'−',c:'op',a:'key',v:'-'},
   {l:'1',a:'key',v:'1'},{l:'2',a:'key',v:'2'},{l:'3',a:'key',v:'3'},{l:'+',c:'op',a:'key',v:'+'},
@@ -1397,7 +1397,7 @@ function renderMain(){
     <div class="display-card">
       <div class="expr-editor-wrap">
         <textarea class="expr-textarea" id="expr-ta" rows="2"
-          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+          autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" inputmode="none"
           aria-label="Expression editor"
           placeholder="Enter expression…"></textarea>
       </div>
