@@ -3,10 +3,13 @@ const CACHE_NAME = 'smartcalc-v2';
 const ASSETS = [
   '/',
   '/index.html',
-  '/manifest.json'
+  '/manifest.json',
+  '/style.css',        // Add your CSS filename
+  '/script.js',        // Add your JS filename
+  '/index.js'          // Add other JS files
 ];
 
-// Install — cache all assets
+// Install — cache assets
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE_NAME)
@@ -15,7 +18,7 @@ self.addEventListener('install', e => {
   );
 });
 
-// Activate — delete ALL old caches
+// Activate — delete old caches
 self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys().then(keys =>
@@ -28,7 +31,7 @@ self.addEventListener('activate', e => {
   );
 });
 
-// Fetch — network first, fallback to cache
+// Fetch — Network FIRST, fallback to cache (works offline + updates fast)
 self.addEventListener('fetch', e => {
   e.respondWith(
     fetch(e.request)
@@ -37,6 +40,6 @@ self.addEventListener('fetch', e => {
         caches.open(CACHE_NAME).then(cache => cache.put(e.request, clone));
         return res;
       })
-      .catch(() => caches.match(e.request))
+      .catch(() => caches.match(e.request)) // Offline fallback
   );
 });
