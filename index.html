@@ -1577,7 +1577,7 @@ function renderTip(area){
     <div class="field"><label>Bill Amount</label><input type="number" id="u-b" placeholder="120" inputmode="decimal"></div>
     <div class="field-row">
       <div class="field"><label>Tip (%)</label><input type="number" id="u-t" placeholder="0" value="0" inputmode="decimal"></div>
-      <div class="field"><label>People</label><input type="number" id="u-pp" placeholder="4" inputmode="numeric"></div>
+      <div class="field"><label>People</label><input type="number" id="u-pp" placeholder="1" value="1" inputmode="numeric"></div>
     </div>
     <div class="res-box" id="util-result"><div class="res-num">—</div><div class="res-lbl">Enter values</div><div class="res-formula"></div></div>
   </div>
@@ -1745,7 +1745,7 @@ function computeUtil(){
       addToHistory('Tax',fmtN(net));
     } else if(m==='tip'){
       const b=+document.getElementById('u-b')?.value||0;
-      const t=+document.getElementById('u-t')?.value||15;
+      const t=+(document.getElementById('u-t')?.value??0);
       const pp=+document.getElementById('u-pp')?.value||1;
       if(!b){setUtil('—','Per Person','Enter bill');return}
       const tip=b*(t/100);const total=b+tip;const perp=total/pp;
