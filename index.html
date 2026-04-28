@@ -300,7 +300,7 @@ const ME = {
     while(i<s.length){
       const m=s.slice(i).match(/^(sqrt|cbrt|sinr|cosr|tanr|asinr|acosr|atanr|asin|acos|atan|sin|cos|tan|log2|log|ln|abs|ceil|floor|round|exp|fact|sign|trunc)/i);
       if(m){toks.push({t:'fn',v:m[0].toLowerCase()});i+=m[0].length;continue}
-      const nm=s.slice(i).match(/^(pi|e|x)\b/i);
+      const nm=s.slice(i).match(/^(pi|e|x)(?![a-zA-Z0-9_])/i);
       if(nm){toks.push({t:'const',v:nm[0].toLowerCase()});i+=nm[0].length;continue}
       const dm=s.slice(i).match(/^\d+(\.\d+)?([eE][+-]?\d+)?/);
       if(dm){toks.push({t:'num',v:parseFloat(dm[0])});i+=dm[0].length;continue}
@@ -1010,9 +1010,16 @@ class GraphEngine {
     if (!this._needsUpdate) return;
     for (const g of this.graphs.values()) {
       if (!g.visible) continue;
-      g.segments = g.type === 'explicit'
-        ? this.computeExplicit(g.fn)
-        : this.computePolar(g.fn);
+      if (g.type === 'vertical') {
+        // fn holds the xVal as a string
+        const xv = parseFloat(g.fn);
+        const { yMin, yMax } = this.viewBox;
+        g.segments = [[{ x: xv, y: yMin - 1 }, { x: xv, y: yMax + 1 }]];
+      } else {
+        g.segments = g.type === 'explicit'
+          ? this.computeExplicit(g.fn)
+          : this.computePolar(g.fn);
+      }
     }
     this._needsUpdate = false;
   }
@@ -1295,7 +1302,7 @@ class GraphEngine {
       const xmaxEl = document.getElementById('graph-xmax');
       if (xminEl) xminEl.value = -10;
       if (xmaxEl) xmaxEl.value = 10;
-      this.autoYRange(_s.graphFn);
+      this.autoYRange(sanitizeGraphExpr(_s.graphFn).fn || _s.graphFn);
       this.invalidate();
     }, { passive: true });
   }
@@ -1315,30 +1322,118 @@ class GraphEngine {
 let _ge = null; // GraphEngine instance, created lazily
 
 /**
+/**
+ * sanitizeGraphExpr(raw)
+ * Returns either:
+ *   { type:'explicit', fn:'2x+5' }          — normal y=f(x) curve
+ *   { type:'vertical', xVal:3, label:'x=3' } — vertical line (only for x=c)
+ *
+ * Input forms:
+ *   sin(x)      → explicit  sin(x)
+ *   y = 2x+5    → explicit  2x+5
+ *   2x+5 = y    → explicit  2x+5
+ *   2x+5 = 0    → explicit  2x+5   (plot the line, zero-crossing at x=-2.5)
+ *   x^2-4 = 0   → explicit  x^2-4  (plot the parabola, roots at ±2)
+ *   x = 3       → vertical  x = 3
+ */
+function sanitizeGraphExpr(raw) {
+  const expr = raw.trim();
+
+  // ── No '=' → plain expression ──────────────────
+  if (!expr.includes('=')) return { type:'explicit', fn: expr };
+
+  const eqIdx = expr.indexOf('=');
+  const lhs   = expr.slice(0, eqIdx).trim();
+  const rhs   = expr.slice(eqIdx + 1).trim();
+
+  // ── y = f(x)  or  f(x) = y ─────────────────────
+  if (/^y$/i.test(lhs)) return { type:'explicit', fn: rhs };
+  if (/^y$/i.test(rhs)) return { type:'explicit', fn: lhs };
+
+  // ── x = constant  e.g. "x = 3" → vertical line ─
+  if (/^x$/i.test(lhs)) {
+    const v = ME.evaluate(rhs, 0);
+    if (!v.error && v.result !== null)
+      return { type:'vertical', xVal: v.result, label:'x = ' + v.result };
+  }
+
+  // ── f(x) = g → solve or plot ───────────────
+  const rhsHasX = /\bx\b/i.test(rhs);
+
+  // Both sides have x (e.g. 2x = x+1) → plot lhs-rhs as curve
+  if (rhsHasX) {
+    return { type:'explicit', fn: `(${lhs})-(${rhs})` };
+  }
+
+  // rhs has no x → evaluate shifted fn at 3 points to detect linearity
+  const rhsVal = ME.evaluate(rhs === '' ? '0' : rhs, 0);
+  const C = (!rhsVal.error && rhsVal.result !== null) ? rhsVal.result : 0;
+  const shiftedFn = `(${lhs})-(${C})`;
+
+  const f0 = ME.evaluate(shiftedFn, 0);
+  const f1 = ME.evaluate(shiftedFn, 1);
+  const f2 = ME.evaluate(shiftedFn, 2);
+
+  const ok = !f0.error && !f1.error && !f2.error &&
+             f0.result !== null && f1.result !== null && f2.result !== null;
+
+  if (ok) {
+    const d1 = f1.result - f0.result;
+    const d2 = f2.result - f1.result;
+    const secondDiff = Math.abs(d2 - d1);
+
+    if (secondDiff < 1e-9 && Math.abs(d1) > 1e-12) {
+      // Linear → exact solve: x = -f(0) / slope
+      const xSol = parseFloat((-f0.result / d1).toPrecision(10));
+      return { type:'vertical', xVal: xSol, label:`x = ${xSol}` };
+    }
+  }
+
+  // Non-linear → plot shifted curve (zero-crossings = solutions)
+  return { type:'explicit', fn: shiftedFn };
+}
+
+/**
  * drawGraph() — thin shim called by all existing event handlers.
- * Creates/reuses the GraphEngine singleton, syncs from app state, plots.
  */
 function drawGraph() {
   const canvas = document.getElementById('graph-canvas');
   if (!canvas) return;
 
-  // Create engine once per canvas element (canvas is replaced on tab switch)
   if (!_ge || _ge.canvas !== canvas) {
     _ge = new GraphEngine(canvas, ME);
   }
 
-  // Sync viewBox x-range from app state (unless user is mid-pan)
+  const parsed = sanitizeGraphExpr(_s.graphFn);
+
   _ge.viewBox.xMin = _s.graphXmin;
   _ge.viewBox.xMax = _s.graphXmax;
 
-  // Auto-fit Y unless the user has manually panned/zoomed Y
-  if (!_ge._userZoomedY) {
-    _ge.autoYRange(_s.graphFn);
-  }
+  if (parsed.type === 'vertical') {
+    // Draw a vertical line at xVal
+    const xv = parsed.xVal;
+    if (!_ge._userZoomedY) {
+      _ge.viewBox.yMin = -10;
+      _ge.viewBox.yMax = 10;
+    }
+    // Use the 'vertical' type — GraphEngine.updateGraphs handles it
+    _ge.setGraph(String(xv), 'vertical', { id:'main', color:'#7c6af7' });
 
-  // Register the current function as the sole graph
-  _ge.setGraph(_s.graphFn, 'explicit', { id: 'main', color: '#7c6af7' });
-  // setGraph already calls invalidate → requestRender
+    const lbl = document.getElementById('graph-plotting-as');
+    if (lbl) lbl.textContent = `plotting: ${parsed.label}  (vertical line)`;
+
+  } else {
+    const cleanFn = parsed.fn;
+    if (!_ge._userZoomedY) _ge.autoYRange(cleanFn);
+    _ge.setGraph(cleanFn, 'explicit', { id:'main', color:'#7c6af7' });
+
+    const lbl = document.getElementById('graph-plotting-as');
+    if (lbl) {
+      lbl.textContent = cleanFn !== _s.graphFn.trim()
+        ? `plotting: y = ${cleanFn}`
+        : '';
+    }
+  }
 }
 
 // ══════════════════════════════════════════════
@@ -1453,7 +1548,8 @@ function renderGraph(area){
       <button class="graph-btn" data-action="graph-reset">Reset</button>
     </div>
     <div class="graph-wrap" style="margin-top:.6rem;height:260px"><canvas id="graph-canvas"></canvas></div>
-    <div class="graph-info">Use x as the variable. Trig uses radians (sin, cos, tan). For degrees use the ° suffix or multiply by π/180. Scroll to zoom · drag to pan · double-click to reset.</div>
+    <div id="graph-plotting-as" style="font-family:var(--mf);font-size:.7rem;color:var(--accent3);margin-top:.3rem;text-align:center;min-height:1em"></div>
+    <div class="graph-info">Use x as the variable. Trig uses radians (sin, cos, tan). Scroll to zoom · drag to pan · double-click to reset.</div>
   </div>
   ${renderHistoryHTML()}`;
   setTimeout(drawGraph,30);
