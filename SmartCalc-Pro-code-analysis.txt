@@ -1,0 +1,165 @@
+================================================================================
+  SMARTCALC PRO — QUICK LINE REFERENCE
+  "where do I go when X is broken or I want to add Y"
+  Dusk Lab
+================================================================================
+
+CALCULATOR
+──────────────────────────────────────────────────────────────────────────────
+  Bug: calculator gives wrong answer / math is broken     →  L279–437   (ME object, tokeniser, evaluator)
+  Bug: sin/cos/tan giving wrong values                    →  L280–293   (ME.FNS degree vs radian)
+  Bug: % or factorial not working                         →  L291–333   (tokeniser % handling, fact fn)
+  Bug: unary minus (-3) evaluating wrong                  →  L371–382   (unary handling in evaluator)
+  Bug: parentheses not matching / mismatch error          →  L388–408   (shunting-yard paren logic)
+  Add: new math function (e.g. sinh, cosh)                →  L280–293   (add to ME.FNS) + L301 (add to tokeniser regex)
+
+DISPLAY & INPUT
+──────────────────────────────────────────────────────────────────────────────
+  Bug: result showing wrong / not updating                →  L1454–1471 (updateDisplayOnly)
+  Bug: typing on numpad clears expression unexpectedly    →  L1792–1817 (handleKey, justEvaled logic)
+  Bug: cursor jumps / textarea loses focus on keypress    →  L1689–1744 (attachEditorEvents)
+  Bug: autocomplete not showing / showing wrong items     →  L706–735   (AC_FNS list, getAC, renderAC)
+  Add: new autocomplete function suggestion               →  L706–712   (add to AC_FNS array)
+  Bug: paren hint / validation message wrong              →  L740–758   (parenBalance, validate)
+  Bug: result number format looks wrong (too many digits) →  L763–774   (fmtR, fmtN)
+
+MEMORY
+──────────────────────────────────────────────────────────────────────────────
+  Bug: MC / MR / M+ / M- not working correctly           →  L482–518   (memOp function)
+  Bug: memory display not refreshing                      →  L1448–1452 (renderMemBar)
+
+NUMPAD / BUTTONS
+──────────────────────────────────────────────────────────────────────────────
+  Bug: a button doing the wrong thing on click            →  L1969–2043 (bindEvents click dispatcher)
+  Add: new button to General calculator                   →  L668–674   (generalKeys array)
+  Add: new button to Scientific calculator                →  L675–683   (scientificKeys array)
+  Bug: keyboard shortcut not working                      →  L2046–2064 (keyboard handler in bindEvents)
+
+GRAPH ENGINE — CORE
+──────────────────────────────────────────────────────────────────────────────
+  Bug: equation input (e.g. 2x+5=0) plots wrong graph    →  L1339–1394 (sanitizeGraphExpr)
+  Bug: graph not drawing at all                           →  L1399–1437 (drawGraph shim)
+  Bug: graph curve is jagged / too smooth / missing parts →  L912–996   (subdivide + computeExplicit)
+  Bug: vertical line not drawing                          →  L1009–1025 (updateGraphs vertical branch)
+  Bug: asymptotes drawing as vertical spikes              →  L974–985   (discontinuity detection)
+  Bug: polar graph wrong                                  →  L999–1007  (computePolar)
+  Add: new graph input type (e.g. parametric)             →  L857–868   (setGraph) + L1009–1025 (updateGraphs) + L1399–1437 (drawGraph)
+
+GRAPH ENGINE — VISUALS
+──────────────────────────────────────────────────────────────────────────────
+  Bug: grid lines wrong spacing / too dense               →  L807–815   (_niceStep)
+  Bug: axis labels in wrong position / overlapping        →  L1141–1172 (drawAxisLabels)
+  Bug: graph wrong color in light/dark mode               →  L817–826   (_colors)
+  Bug: graph curve too thin / thick                       →  L1174–1190 (drawGraph, lineWidth)
+  Bug: x-range watermark text wrong                       →  L1192–1202 (drawWatermark)
+  Add: change graph curve color                           →  L1399–1437 (drawGraph, color option in setGraph call)
+
+GRAPH ENGINE — INTERACTION
+──────────────────────────────────────────────────────────────────────────────
+  Bug: pan / drag not working                             →  L1212–1231 (mouse drag in setupInteractions)
+  Bug: scroll zoom not working or too fast                →  L1234–1246 (wheel handler)
+  Bug: pinch zoom on mobile not working                   →  L1278–1292 (touch pinch handler)
+  Bug: double-click reset not working                     →  L1297–1307 (dblclick handler)
+  Bug: x-range inputs not syncing after pan/zoom          →  L1310–1318 (_syncInputs)
+  Bug: Y axis not auto-fitting on new plot                →  L1027–1051 (autoYRange)
+  Bug: canvas blurry on retina / HiDPI screen             →  L792–793   (pixelRatio) + L844–853 (resize)
+
+FORMULAS TAB
+──────────────────────────────────────────────────────────────────────────────
+  Add: new formula category (e.g. Trigonometry)           →  L522–574   (FORMULAS object, add new key + array)
+  Add: formula to existing category                       →  L522–574   (find the category array, add entry)
+  Example — add trig formulas:
+    Go to L522, inside FORMULAS object add:
+      trigonometry:[
+        {name:'Law of Cosines', expr:'sqrt(a^2+b^2-2*a*b*c)', desc:'c = √(a²+b²−2ab·cosC)',
+         vars:[{id:'a',lbl:'Side a',ph:'5'},{id:'b',lbl:'Side b',ph:'7'},{id:'c',lbl:'cos(C)',ph:'0.5'}]},
+        ... more entries
+      ]
+    Then add a tab button label to FORMULAS so it appears in renderFormulas (L1620).
+  Bug: formula calculation giving wrong result             →  L1907–1933 (calcFormula)
+  Bug: formula fields not showing on click                 →  L1620–1647 (renderFormulas, activeFormula logic)
+
+EQUATION SOLVER TAB
+──────────────────────────────────────────────────────────────────────────────
+  Bug: linear solver wrong answer                         →  L617–620   (solveLinear)
+  Bug: quadratic solver wrong / no real roots message     →  L621–628   (solveQuadratic)
+  Bug: cubic solver missing roots                         →  L629–647   (solveCubic, Newton-Raphson)
+  Bug: statistics results wrong                           →  L648–663   (statsCalc)
+  Bug: stats grid not updating while typing               →  L1893–1905 (updateStats)
+  Add: new equation type (e.g. quartic)                   →  L1580–1618 (renderEquations, add tab + fields) + new solver function
+
+UNIT CONVERSION TAB
+──────────────────────────────────────────────────────────────────────────────
+  Bug: unit conversion giving wrong result                →  L600–612   (convertUnit)
+  Bug: temperature conversion wrong                       →  L601–609   (temp special case in convertUnit)
+  Add: new unit to existing category                      →  L579–598   (UNITS object, add to units[] and toBase{})
+  Add: new unit category entirely                         →  L579–598   (add new key to UNITS) + L1558–1578 (renderUnits, category pills)
+
+LOAN / TAX / TIP TABS
+──────────────────────────────────────────────────────────────────────────────
+  Bug: EMI / loan calculation wrong                       →  L1824–1834 (computeUtil loan branch)
+  Bug: tax calculation wrong                              →  L1835–1840 (computeUtil tax branch)
+  Bug: tip split calculation wrong                        →  L1841–1850 (computeUtil tip branch)
+  Add: new utility calculator tab                         →  L469–477   (add to MODES) + new renderX() function + new branch in computeUtil
+
+HISTORY
+──────────────────────────────────────────────────────────────────────────────
+  Bug: history not saving between sessions                →  L1766–1773 (addToHistory, saveLS call)
+  Bug: history not showing / rendering wrong              →  L1522–1535 (renderHistoryHTML)
+  Bug: recall from history puts wrong value in input      →  L2013–2020 (recall-hist in bindEvents)
+  Add: increase history limit (currently 10)              →  L1769       (change .slice(0,10))
+
+THEMING
+──────────────────────────────────────────────────────────────────────────────
+  Bug: light mode colors wrong                            →  L23–28     ([data-theme="light"] overrides)
+  Bug: graph not updating when theme toggles              →  L1982–1983 (toggle-theme, _ge.invalidate call)
+  Add: new color / change accent color                    →  L13–21     (:root CSS variables)
+
+TOAST / NOTIFICATIONS
+──────────────────────────────────────────────────────────────────────────────
+  Bug: toast not showing / disappears too fast            →  L1958–1962 (toast function, 2000ms timer)
+  Add: change toast duration                              →  L1962       (change 2000 to desired ms)
+
+COPY BUTTON
+──────────────────────────────────────────────────────────────────────────────
+  Bug: copy not working on some browsers                  →  L1938–1952 (copyResult, execCommand fallback)
+
+PWA / INSTALL
+──────────────────────────────────────────────────────────────────────────────
+  Bug: install banner not showing                         →  L2099–2118 (setupPWA)
+  Bug: service worker not registering                     →  L2130–2132 (init, sw.js registration)
+
+LAYOUT & TABS
+──────────────────────────────────────────────────────────────────────────────
+  Bug: wrong tab active / tabs not switching              →  L1969–1977 (set-mode in bindEvents)
+  Bug: tab content not rendering correctly                →  L1473–1520 (renderMain mode router)
+  Add: new tab / mode entirely                            →  L469–477   (MODES) + renderX() + renderMain router + bindEvents set-mode
+
+================================================================================
+  GOLDEN RULES (read before touching anything)
+================================================================================
+
+  1. All graph input goes through sanitizeGraphExpr() first (L1339).
+     Never pass raw _s.graphFn to ME or GraphEngine directly.
+
+  2. The 30ms setTimeout in renderGraph() (L1555) is not a bug.
+     Canvas needs to be in the DOM before GraphEngine reads its size.
+
+  3. Calculator uses DEGREES for sin/cos/tan.
+     Graph engine converts to RADIANS via _toRadFn (L881).
+     Do not change one without updating the other.
+
+  4. Use updateDisplayOnly() (L1454) for live calculator updates.
+     Use render() (L1683) only for full tab/mode changes.
+     Calling render() inside a keypress handler breaks textarea focus.
+
+  5. To add a formula: edit FORMULAS object (L522) only.
+     renderFormulas (L1620) reads it automatically. No HTML to touch.
+
+  6. To add a unit: edit UNITS object (L579) only.
+     convertUnit (L600) and renderUnits (L1558) read it automatically.
+
+================================================================================
+  END
+  Dusk Lab — stay poor, stay pure.
+================================================================================
