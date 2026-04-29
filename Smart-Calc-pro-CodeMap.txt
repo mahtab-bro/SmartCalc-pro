@@ -1,0 +1,1113 @@
+================================================================================
+  SMARTCALC PRO — FULL SOURCE CODE MAP
+  File: smartcalc_fixed.html  |  Total lines: 2149
+  Author: Dusk Lab
+  Doc written by: Claude (Anthropic) — session tracker for solo dev
+================================================================================
+
+QUICK REFERENCE — JUMP TABLE
+──────────────────────────────────────────────────────────────────────────────
+  LINE     SECTION
+  1        HTML head, meta, PWA manifest link, font imports
+  12       CSS — design tokens (:root variables)
+  23       CSS — light theme override
+  29       CSS — global reset + body layout
+  37       CSS — header
+  48       CSS — tabs / nav bar
+  58       CSS — memory bar
+  69       CSS — display card (main expression area)
+  75       CSS — multi-line expression textarea
+  85       CSS — syntax highlight color classes
+  90       CSS — autocomplete dropdown
+  99       CSS — result display value
+  111      CSS — numpad grid + key variants
+  135      CSS — card base style
+  140      CSS — utility form fields
+  151      CSS — result box
+  159      CSS — graph canvas + controls
+  175      CSS — formula library cards
+  192      CSS — equation solver tabs
+  199      CSS — unit conversion categories
+  209      CSS — history panel
+  225      CSS — toast notification
+  232      CSS — statistics grid
+  238      CSS — PWA install banner
+  245      CSS — responsive breakpoint (≥480px)
+  248      HTML body — outer shell, header, nav placeholder, main-area, toast
+  272      SCRIPT — App IIFE opens, "use strict"
+  279      MATH ENGINE — ME object (tokeniser + evaluator)
+  439      STATE — _s object (all app state, single source of truth)
+  455      PERSISTENCE — loadLS / saveLS (localStorage helpers)
+  469      MODES — MODES object (tab labels)
+  480      MEMORY OPS — memOp()
+  522      FORMULA LIBRARY — FORMULAS data object
+  576      UNIT CONVERSION — UNITS data object + convertUnit()
+  614      EQUATION SOLVER — solveLinear / solveQuadratic / solveCubic / statsCalc
+  665      NUMPAD LAYOUTS — generalKeys() / scientificKeys()
+  685      SYNTAX HIGHLIGHT — highlight() + updateHighlight() stub
+  703      AUTOCOMPLETE — AC_FNS list, getAC(), renderAC()
+  740      PAREN MATCHING — parenBalance()
+  748      VALIDATION — validate()
+  760      FORMAT HELPERS — fmtR / fmtN / esc
+  776      GRAPH ENGINE CLASS — GraphEngine (lines 782–1319)
+  857      GRAPH ENGINE — setGraph / clearGraphs
+  875      GRAPH ENGINE — _toRadFn (degree→radian shim for graphing)
+  895      GRAPH ENGINE — evalSafe
+  903      GRAPH ENGINE — _toPx coordinate helper
+  912      GRAPH ENGINE — subdivide (adaptive subdivision)
+  947      GRAPH ENGINE — computeExplicit (main curve sampler)
+  999      GRAPH ENGINE — computePolar
+  1009     GRAPH ENGINE — updateGraphs (dispatcher: explicit / polar / vertical)
+  1027     GRAPH ENGINE — autoYRange
+  1053     GRAPH ENGINE — invalidate / requestRender
+  1070     GRAPH ENGINE — render (master draw call)
+  1097     GRAPH ENGINE — drawGrid
+  1122     GRAPH ENGINE — drawAxes + origin dot
+  1141     GRAPH ENGINE — drawAxisLabels
+  1174     GRAPH ENGINE — drawGraph (stroke segments onto canvas)
+  1192     GRAPH ENGINE — drawWatermark (x-range label bottom-right)
+  1204     GRAPH ENGINE — setupInteractions (mouse/touch/wheel/dblclick)
+  1310     GRAPH ENGINE — _syncInputs (push viewBox → DOM inputs + state)
+  1319     GRAPH ENGINE class ends
+  1321     GRAPH SINGLETON — let _ge = null
+  1324     EQUATION SANITIZER — sanitizeGraphExpr() [KEY FUNCTION — see details]
+  1395     DRAW SHIM — drawGraph() [KEY FUNCTION — see details]
+  1439     RENDER ENGINE — renderNav / renderMemBar / updateDisplayOnly
+  1473     RENDER ENGINE — renderMain (mode router)
+  1522     RENDER ENGINE — renderHistoryHTML
+  1537     RENDER ENGINE — renderGraph (Graph tab HTML)
+  1558     RENDER ENGINE — renderUnits
+  1580     RENDER ENGINE — renderEquations
+  1620     RENDER ENGINE — renderFormulas
+  1649     RENDER ENGINE — renderLoan / renderTax / renderTip
+  1683     RENDER ENGINE — render() (calls renderNav + renderMain)
+  1685     EDITOR EVENTS — attachEditorEvents (textarea input/keydown)
+  1746     EDITOR — updateACHighlight / applyAC
+  1763     CALC ACTIONS — addToHistory / computeExpr / handleKey
+  1819     UTIL COMPUTE — computeUtil (loan/tax/tip) / setUtil
+  1865     UNIT COMPUTE — computeUnit
+  1877     EQ SOLVER UI — solveEq / updateStats / calcFormula
+  1935     CLIPBOARD — copyResult
+  1957     TOAST — toast()
+  1964     EVENTS — bindEvents() (global click dispatcher + keyboard + input)
+  2095     PWA — setupPWA (beforeinstallprompt, install button)
+  2120     INIT — init() (boot sequence)
+  2135     App.init exposed, DOMContentLoaded hook
+  2141     Footer HTML
+
+
+================================================================================
+  SECTION-BY-SECTION DETAIL
+================================================================================
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1–11 — HTML HEAD
+────────────────────────────────────────────────────────────────────────────────
+  Standard HTML5 boilerplate.
+  - charset UTF-8, viewport mobile-ready
+  - theme-color #0a0a0f (matches --bg dark)
+  - manifest.json linked (required for PWA install)
+  - apple-touch-icon: inline SVG data URI with ∑ symbol on purple background
+  - Google Fonts: DM Mono (monospace, used for all numbers/code)
+                  Syne (display font, used for headings/brand)
+  - Title: "SmartCalc Pro"
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 12–246 — CSS
+────────────────────────────────────────────────────────────────────────────────
+  All styles are in a single <style> block. No external stylesheet.
+  Uses CSS custom properties (variables) throughout — never hardcoded colors.
+
+  :root (L13–21)
+    Design token system. Every color, spacing, font, animation is a variable.
+    Key tokens:
+      --bg, --surface, --surface2, --surface3  → background layers (dark: near-black)
+      --border, --border2                      → border shades
+      --accent  #7c6af7  purple                → primary CTA, active tab, graph curve
+      --accent2 #f76a8f  pink                  → errors, clear button
+      --accent3 #6af7c8  teal                  → memory display, OK validation, plot label
+      --accent4 #f7c46a  amber                 → unit tab, warnings
+      --text, --text-dim, --text-muted         → text hierarchy
+      --syn-num/op/fn/paren                    → syntax highlight colors
+      --df / --mf                              → display font / mono font shorthand
+      --r 14px / --rs 8px                      → border radius tokens
+      --t  transition shorthand
+      --shadow / --glow                        → box shadow tokens
+
+  [data-theme="light"] (L23–28)
+    Overrides only the surface/border/text/shadow variables.
+    Everything else auto-inherits. Accent colors unchanged (purple stays purple).
+
+  body::before (L34)
+    Subtle SVG noise texture overlay, pointer-events:none, z-index:0.
+    Gives the dark background a slight grain feel.
+
+  .shell (L35)
+    Main container. max-width 520px, centered, z-index:1 (above noise).
+
+  Key component styles (summarised):
+    .tab / .tab.active     → pill-shaped nav tabs, accent background when active
+    .mem-bar               → horizontal memory strip with MC/MR/M+/M- buttons
+    .display-card          → main expression + result card with gradient glow overlay
+    .expr-textarea         → multi-line input, no resize, DM Mono, auto-height
+    .autocomplete          → absolutely positioned dropdown over textarea
+    .display-value         → large result number (2.4rem), .error turns pink
+    .key                   → numpad button base — 54px tall, ripple via ::after
+    .key.op / .eq / .clear / .fn / .mem-k  → color variants for key types
+    .graph-wrap            → canvas container, 260px tall, rounded, clipped
+    canvas#graph-canvas    → touch-action:none (prevent scroll hijack on mobile)
+    .graph-info            → small hint text below canvas
+    .graph-controls input  → x-range inputs and function input field
+    .formula-card          → expandable card in formula library
+    .eq-type-tabs          → equation type selector pills (teal accent)
+    .unit-cats             → unit category pills (amber accent)
+    .hist-item             → history row, clickable to recall
+    .toast                 → fixed bottom notification, slides up on .show
+    .stats-grid            → 2-col grid for statistics results
+    .pwa-banner            → install prompt strip (hidden by default)
+
+  Responsive (L245):
+    @media (min-width:480px) → keys 60px tall, result font 2.8rem
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 248–271 — HTML BODY
+────────────────────────────────────────────────────────────────────────────────
+  <body data-theme="dark">           ← JS toggles this attribute for theming
+    <div class="shell" id="app">
+      <header>                       ← brand + icon buttons (theme, copy)
+      <nav class="tabs-outer">       ← #nav filled by renderNav()
+        <div class="tabs" id="nav">
+      <div class="pwa-banner">       ← install prompt, hidden by default
+      <div id="main-area">           ← entire mode content injected here by renderMain()
+    <div class="toast" id="toast">   ← notification, outside shell for fixed positioning
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 272–437 — MATH ENGINE (ME object)
+────────────────────────────────────────────────────────────────────────────────
+  A self-contained arithmetic engine. No eval(), no external library.
+  Uses Dijkstra's Shunting-Yard algorithm to parse and evaluate expressions.
+
+  ME.FNS (L280–294)
+    Function lookup table. Maps string names → JS Math functions.
+    Notable:
+      sin/cos/tan        → degree versions (multiply input by π/180)
+      sinr/cosr/tanr     → radian versions (used internally by graph engine)
+      asin/acos/atan     → degree-output versions
+      asinr/acosr/atanr  → radian-output versions
+      fact               → factorial (integer only, max 170, >170 returns Infinity)
+      mod                → modulo (returns NaN if b=0)
+
+  ME.PREC (L295)  → operator precedence: + - = 1, * / = 2, ^ = 3
+  ME.RASSO (L296) → right-associative set: only ^ is right-associative
+
+  ME.tokenise(expr) (L297–333)
+    Input: raw expression string
+    Output: array of token objects {t, v}
+      t: 'fn' | 'const' | 'num' | 'op'
+      v: string name or numeric value
+
+    Processing steps:
+      1. Strip whitespace, normalise π→pi, ×→*, ÷→/
+      2. Try match function name (longest-match first via regex order)
+      3. Try match constant: pi, e, x  (uses (?![a-zA-Z0-9_]) lookahead
+         instead of \b so it works after digits — e.g. "2x")
+      4. Try match number (with optional decimal and scientific notation)
+      5. Try match operator from set: + - * / ^ % ( )
+      6. Unknown character → silently skip (L308)
+      7. Post-process % tokens: postfix % (e.g. "8%") → inject /100 tokens
+         binary % is left for the evaluator to flag as error
+
+  ME.evaluate(expr, xVal) (L334–436)
+    Input: expression string, optional x value (for graphing)
+    Output: { result: number|null, error: string|null }
+
+    Processing steps:
+      1. Tokenise
+      2. Implicit function parentheses:
+           sin x → sin(x)
+           sin2x → sin(2x)  [wraps next atom in parens if no ( follows fn]
+      3. Implicit multiplication insertion:
+           2x    → 2 * x
+           3(x)  → 3 * (x)
+           x(2)  → x * (2)
+           Condition: left is value/const/closing paren
+                      right is fn/const/num/opening paren
+      4. Unary minus/plus handling:
+           Leading - → insert 0 before it (0 - x evaluates correctly)
+           Leading + → skip it (no-op)
+      5. Shunting-Yard: tokens → RPN (Reverse Polish Notation) output queue
+         Handles: operator precedence, right-associativity (^), function calls,
+                  parentheses matching (returns error on mismatch)
+      6. RPN evaluation: stack-based, applies operators/functions left to right
+      7. Division by zero, non-finite result, unknown operator → error return
+
+    x variable: when xVal is provided, 'x' tokens resolve to xVal.
+                 when null, 'x' resolves to Math.E (design decision — prevents
+                 errors in non-graph contexts where x appears by accident)
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 439–453 — STATE OBJECT (_s)
+────────────────────────────────────────────────────────────────────────────────
+  Single source of truth for all app state. Never mutate DOM without going
+  through _s first, then calling render() or a targeted update function.
+
+  Fields:
+    mode          → current tab: 'general' | 'scientific' | 'graph' |
+                    'units' | 'equations' | 'formulas' | 'loan' | 'tax' | 'tip'
+    theme         → 'dark' | 'light'
+    expr          → current expression string in the calculator input
+    result        → formatted result string shown in display
+    reasoning     → step display string (e.g. "3+4 = 7")
+    error         → boolean — is current result an error?
+    justEvaled    → boolean — was = just pressed? Used to clear on next digit
+    memory        → stored memory value (number)
+    memSet        → boolean — has memory been set?
+    exprHistory   → array of past expressions (for ↑↓ navigation)
+    exprHistIdx   → current position in exprHistory (-1 = live)
+    activeAC      → index of highlighted autocomplete item (-1 = none)
+    acItems       → current autocomplete suggestions array
+    graphFn       → current graph function string (e.g. "sin(x)")
+    graphXmin     → graph x-axis left bound (default -10)
+    graphXmax     → graph x-axis right bound (default 10)
+    formulaCat    → active formula category key
+    activeFormula → index of expanded formula card (null = none)
+    eqType        → equation solver type: 'linear'|'quadratic'|'cubic'|'stats'
+    unitCat       → active unit conversion category key
+    history       → calculation history array, loaded from localStorage
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 455–467 — PERSISTENCE (loadLS / saveLS)
+────────────────────────────────────────────────────────────────────────────────
+  loadLS(key, default)
+    Reads from localStorage, parses JSON, returns default on any error.
+    Used for: history ('sc3_hist'), theme ('sc3_theme').
+
+  saveLS(key, value)
+    Writes to localStorage via requestIdleCallback (non-blocking).
+    Falls back to setTimeout(0) if rIC not available (older browsers).
+    Wrapped in try/catch — storage quota errors are silent.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 469–477 — MODES
+────────────────────────────────────────────────────────────────────────────────
+  MODES object maps mode keys → { label } for the nav tab bar.
+  Tabs rendered by renderNav() from this object.
+  Current modes: general, scientific, graph, units, equations, formulas,
+                 loan, tax, tip
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 480–518 — MEMORY OPS (memOp)
+────────────────────────────────────────────────────────────────────────────────
+  memOp(op) handles: 'mc' | 'mr' | 'm+' | 'm-'
+
+  mc → zero memory, set memSet=false, toast
+  mr → insert memory value at cursor position in textarea.
+       If textarea not present, sets _s.expr directly.
+       Calls updateHighlight + updateDisplayOnly (no full re-render).
+  m+ → add current result to memory
+  m- → subtract current result from memory
+  All ops call renderMemBar() to refresh the memory display strip.
+  Error/invalid result states are checked before M+/M-.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 522–574 — FORMULA LIBRARY DATA (FORMULAS)
+────────────────────────────────────────────────────────────────────────────────
+  Nested object: category → array of formula definitions.
+  Categories: finance, engineering, health, math, statistics
+
+  Each formula entry:
+    name   → display name
+    expr   → raw expression string with variable placeholders (e.g. "P*r*t")
+    desc   → short description / textbook notation
+    vars   → array of { id, lbl, ph } for input field generation
+             id matches placeholder name in expr, lbl is label, ph is placeholder
+
+  Formula calculation (calcFormula, L1907):
+    Replaces each variable id in expr with user-entered value via regex,
+    then passes to ME.evaluate().
+
+  Current formulas:
+    Finance:     Compound Interest, EMI/Loan, ROI, Simple Interest
+    Engineering: Ohm's Law, Power, Force, Kinetic Energy
+    Health:      BMI, BMR (male), BMR (female), Ideal Weight
+    Math:        Pythagorean, Circle Area, Sphere Volume, Quadratic (+)
+    Statistics:  Mean, Std Dev (pop), Z-Score, Percentile Rank
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 576–612 — UNIT CONVERSION (UNITS + convertUnit)
+────────────────────────────────────────────────────────────────────────────────
+  UNITS object: category → { label, units[], toBase{} }
+  toBase maps each unit → conversion factor to SI base unit.
+
+  Categories: length, mass, temp, area, volume, speed, time, digital,
+              energy, pressure
+
+  convertUnit(val, from, to, cat)
+    Temperature handled specially (°C/°F/K — non-linear conversion via Celsius
+    as intermediate).
+    All others: val * toBase[from] / toBase[to]
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 614–663 — EQUATION SOLVER FUNCTIONS
+────────────────────────────────────────────────────────────────────────────────
+  solveLinear(a, b)       → "x = N" or "All real numbers" or "No solution"
+  solveQuadratic(a, b, c) → discriminant-based, handles 2 roots, 1 root,
+                             no real roots, degenerates to linear
+  solveCubic(a, b, c, d)  → Newton-Raphson iteration from 21 starting points
+                             (range -20 to +20, step 2). Deduplicates roots
+                             rounded to 6 decimal places. Falls back to
+                             quadratic if a=0.
+  statsCalc(numStr)       → parses comma/space separated numbers, computes:
+                             n, sum, mean, median, mode, variance, std dev,
+                             min, max. Returns null on empty input.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 665–683 — NUMPAD LAYOUTS
+────────────────────────────────────────────────────────────────────────────────
+  generalKeys()    → 4-column layout: AC, ⌫, %, ÷, 7-9, ×, 4-6, −, 1-3, +,
+                      0 (span2), ., =
+  scientificKeys() → 5-column layout: adds sin/cos/tan/log, √, x²/xʸ/ln/n!,
+                      π/e/abs/fact, floor/ceil/round, 0-9
+
+  Each key: { l(label), c(class), a(action), v(value) }
+  Rendered as <button data-action=... data-val=...> by renderMain.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 685–701 — SYNTAX HIGHLIGHTING
+────────────────────────────────────────────────────────────────────────────────
+  highlight(expr)
+    Applies CSS span classes to numbers, functions, operators, parens.
+    Used conceptually — actual textarea doesn't render inner HTML.
+
+  updateHighlight() (L699)
+    Stub kept for call-site compatibility. Textarea elements don't support
+    innerHTML-based syntax coloring. Full highlight would require a contentEditable
+    overlay approach (not implemented to keep complexity low).
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 703–735 — AUTOCOMPLETE
+────────────────────────────────────────────────────────────────────────────────
+  AC_FNS (L706–712)
+    Array of [functionName, hint] pairs for all supported functions.
+    Includes both degree and radian variants.
+
+  getAC(expr) (L713–718)
+    Extracts trailing alphabetic sequence from expr.
+    Returns up to 5 matches that start with that sequence.
+    Only triggers if typed sequence is 2+ chars.
+
+  renderAC() (L720–735)
+    Updates (or creates/removes) the #autocomplete dropdown div.
+    Appended to .expr-editor-wrap so it positions relative to the input.
+    Highlights the _s.activeAC item.
+    FIX: Only updates the dropdown, not the full page — preserves textarea focus.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 740–758 — PAREN MATCHING + VALIDATION
+────────────────────────────────────────────────────────────────────────────────
+  parenBalance(expr) → counts open parens, returns net count (positive = unclosed)
+
+  validate(expr)
+    Returns { msg, cls } where cls is 'ok' | 'warn' | 'err'.
+    Checks: empty → nothing
+            unbalanced parens → warn
+            trailing operator → warn
+            ME.evaluate error → err
+            otherwise → "✓ Valid expression" (ok)
+    Shown live in .validation-msg below the display.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 760–774 — FORMAT HELPERS
+────────────────────────────────────────────────────────────────────────────────
+  fmtR(n)         → Smart number format for main result display.
+                     Scientific notation for |n| > 1e12 or |n| < 1e-7.
+                     Otherwise toPrecision(10), strips trailing zeros.
+
+  fmtN(n, dec=2)  → Locale-formatted number for UI labels.
+                     Uses browser locale for thousands separator.
+                     Returns '—' on null/NaN.
+
+  esc(s)          → HTML-escapes & < > " for safe innerHTML insertion.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 776–1319 — GRAPH ENGINE CLASS (GraphEngine)
+────────────────────────────────────────────────────────────────────────────────
+  Full custom canvas graphing engine. No external library (e.g. no Desmos,
+  no Chart.js). Renders directly to a <canvas> element.
+
+  --- CONSTRUCTOR (L782–805) ---
+    Parameters: canvas element, ME (math engine reference)
+    Initialises:
+      this.graphs      → Map of graph entries (id → {fn, type, color, segments})
+      this.viewBox     → {xMin, xMax, yMin, yMax} (default -10 to +10 both axes)
+      this.pixelRatio  → window.devicePixelRatio for HiDPI/Retina displays
+      this.maxDepth    → 12 (max recursion depth for adaptive subdivision)
+      this.colors[]    → palette for multiple graphs
+      ResizeObserver   → calls resize() whenever canvas changes size
+    Calls: resize(), setupInteractions()
+
+  --- COORDINATE HELPERS (L807–842) ---
+    _niceStep(range, targetTicks)
+      Calculates a "nice" grid step: prefers 1, 2, 5, 10 multiples.
+      Used for grid lines and axis labels.
+
+    _colors()
+      Returns theme-aware color object (bg, grid, axis, label, origin).
+      Reads _s.theme — dark/light aware.
+
+    xToPx(x, w) → converts math x-coordinate to canvas pixel x
+    yToPy(y, h) → converts math y-coordinate to canvas pixel y (inverted)
+    pxToX(px, w) → inverse: canvas pixel → math x
+    pyToY(py, h) → inverse: canvas pixel → math y
+
+  --- RESIZE (L844–853) ---
+    resize()
+      Reads canvas CSS size via getBoundingClientRect().
+      Sets canvas.width/height to CSS size × pixelRatio (HiDPI sharpness).
+      Resets transform, applies pixelRatio scale.
+      Calls invalidate() to trigger redraw.
+
+  --- GRAPH MANAGEMENT (L855–873) ---
+    setGraph(fn, type, opt)
+      Adds or replaces a graph entry in this.graphs Map.
+      type: 'explicit' | 'polar' | 'vertical'
+      opt: { id, color }
+      Calls invalidate() → triggers async render.
+
+    clearGraphs() → empties the map, invalidates.
+
+  --- SAMPLING / CURVE COMPUTATION (L875–1007) ---
+
+    _toRadFn(expr) (L881–893)
+      Converts degree trig names to radian variants before evaluation.
+      Order matters: asin before sin (prevents partial match).
+      sin→sinr, cos→cosr, tan→tanr, asin→asinr, acos→acosr, atan→atanr
+      sinr/cosr/tanr already radians → (?!r) lookahead skips them.
+      Only used by the graph engine — calculator tabs call ME.evaluate directly
+      and use degree versions intentionally.
+
+    evalSafe(fn, x) (L895–901)
+      Calls _toRadFn then ME.evaluate(fn, x).
+      Returns null on any error, NaN, Infinity, or null result.
+      Null signals a domain gap (e.g. log of negative, 1/0).
+
+    _toPx(x, y, w, h) (L903–910)
+      Converts a math-space point to [pixelX, pixelY].
+      Used internally by subdivide for error measurement.
+
+    subdivide(fn, x1, y1, x2, y2, depth, w, h) (L912–945)
+      Recursive adaptive subdivision for curve smoothness.
+      Algorithm:
+        1. Compute midpoint: midX = (x1+x2)/2, midY = evalSafe(midX)
+        2. If midY is null → domain gap → return null
+        3. Convert all three points to pixel space
+        4. Measure pixel distance from actual mid to straight-line mid
+        5. If error < 0.4px → flat enough → return endpoints only
+        6. Otherwise → recurse left half + right half
+        7. Stop at maxDepth=12 (prevents infinite recursion on discontinuities)
+      Returns array of {x,y} points in math space, or null on domain gap.
+
+    computeExplicit(fn) (L947–996)
+      Main curve sampler for y=f(x) type graphs.
+      Steps:
+        1. Determine base sample count: max(100, canvasWidth/2) intervals
+        2. For each interval [x1, x2]:
+           a. Evaluate y1, y2 at endpoints
+           b. If either is null → flush current segment, continue
+           c. Run subdivide → get refined point array
+           d. If subdivide returns null → flush, continue
+           e. Discontinuity check: measure pixel jump from last accepted point
+              to new batch. If vertical jump > 8% of canvas height AND
+              steeper than 45° → it's an asymptote → flush and start new segment
+           f. Append points to current segment (deduplicating shared endpoint)
+        3. flush() collects complete segments (≥2 points)
+      Returns: array of segments, each segment is array of {x,y} math points.
+      Each segment is drawn as a continuous line. Gaps between segments
+      represent domain gaps or asymptotes.
+
+    computePolar(fn) (L999–1007)
+      Simple polar sampler: t from 0 to 2π, step 0.01.
+      Converts (r, t) → (x, y) Cartesian.
+      Returns single segment (no gap detection).
+
+  --- UPDATE DISPATCH (L1009–1025) ---
+    updateGraphs()
+      Called before every render frame.
+      Iterates this.graphs, recomputes segments only if _needsUpdate=true.
+      Dispatches by type:
+        'vertical' → builds a 2-point segment: x=xVal from yMin-1 to yMax+1
+                     (the extra ±1 ensures it extends through the full viewport
+                     even at edge of viewBox). fn stores the xVal as a string.
+        'explicit' → computeExplicit(g.fn)
+        'polar'    → computePolar(g.fn)
+      Sets _needsUpdate=false after completion.
+
+  --- AUTO Y-RANGE (L1027–1051) ---
+    autoYRange(fn)
+      Samples fn at 121 evenly-spaced x points across current xMin→xMax.
+      Sorts valid y values, trims 5% outliers from each tail (handles spikes).
+      Sets viewBox yMin/yMax with 15% padding.
+      Falls back to ±10 if fewer than 3 valid samples.
+      Called on initial plot and on double-click reset.
+      NOT called if user has panned/zoomed Y axis (_userZoomedY flag, though
+      note: _userZoomedY is currently not set anywhere — Y always auto-ranges
+      unless the user pans, at which point it stays where they left it because
+      drawGraph only calls autoYRange when !_ge._userZoomedY).
+
+  --- RENDER LOOP (L1053–1095) ---
+    invalidate()
+      Sets _needsUpdate=true, calls requestRender().
+
+    requestRender()
+      Queues a single rAF (requestAnimationFrame).
+      The _renderPending flag prevents duplicate rAF queues.
+      On next frame: calls updateGraphs() then render().
+
+    render()
+      Master draw sequence per frame:
+        1. Fill background
+        2. drawGrid  → grid lines
+        3. drawAxes  → x/y axis lines + origin dot
+        4. drawAxisLabels → numeric tick labels
+        5. ctx.clip to canvas bounds
+        6. For each visible graph: drawGraph(g)
+        7. drawWatermark
+
+  --- DRAW METHODS (L1097–1201) ---
+    drawGrid(w, h, col) (L1097–1120)
+      Draws vertical and horizontal grid lines.
+      Step size from _niceStep for both axes.
+      Single canvas path for all lines (perf: one stroke call).
+
+    drawAxes(w, h, col) (L1122–1138)
+      Draws x-axis and y-axis if they're within the current viewBox.
+      Draws origin dot (filled circle, 2.5px radius) at (0,0) if visible.
+
+    drawAxisLabels(w, h, col) (L1141–1172)
+      Tick labels for x-axis (centered, below axis line).
+      Tick labels for y-axis (right-aligned, left of axis line).
+      Skips the label nearest to 0 on each axis (avoids clutter at origin).
+      Font size accounts for pixelRatio (sharp on HiDPI).
+
+    drawGraph(g, w, h) (L1174–1190)
+      Iterates g.segments. For each segment of ≥2 points:
+        beginPath → moveTo first point → lineTo remaining → stroke.
+      line width: 2.2px, lineJoin/Cap: round for smooth curves.
+      Vertical lines use the same path — their 2-point segment draws straight.
+
+    drawWatermark(w, h, col) (L1192–1202)
+      Draws "[xMin, xMax]" text in bottom-right corner of canvas.
+      Faint, 9px, DM Mono. Shows current x-range viewport.
+
+  --- INTERACTIONS (L1204–1318) ---
+    setupInteractions()
+      Binds all user input to the canvas element.
+
+      Mouse drag (L1212–1231):
+        mousedown → record start position
+        mousemove (on window, not canvas) → compute dx/dy as fraction of width
+        Translate viewBox by dx * xRange, -dy * yRange.
+        Calls _syncInputs() + invalidate() on every move.
+        mouseup → stop drag.
+
+      Scroll zoom (L1234–1246):
+        wheel event (passive:false to allow preventDefault).
+        Factor: scroll down = ×1.1 (zoom out), scroll up = ×0.9 (zoom in).
+        Zooms toward mouse cursor position (not canvas center).
+        Prevents page scroll inside canvas.
+
+      Touch pan (L1248–1293):
+        touchstart: 1 finger → drag mode. 2 fingers → pinch mode.
+        touchmove:
+          1 finger → same as mouse drag
+          2 fingers → pinch zoom using initial pinch distance ratio
+                      Scales uniformly from pinch center point.
+        touchend → reset both drag and pinch state.
+        All touch events use passive:false where needed.
+
+      Double-click reset (L1297–1307):
+        Resets viewBox to {-10, 10, -10, 10}.
+        Updates _s.graphXmin/xMax + DOM input fields.
+        Calls autoYRange with sanitized current function.
+        Invalidates to redraw.
+
+    _syncInputs() (L1311–1318)
+      After any pan or zoom: writes current viewBox xMin/xMax back to:
+        _s.graphXmin / _s.graphXmax (state)
+        #graph-xmin / #graph-xmax input values (DOM)
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINE 1321 — GRAPH SINGLETON
+────────────────────────────────────────────────────────────────────────────────
+  let _ge = null;
+  Single GraphEngine instance. Created lazily on first drawGraph() call.
+  Re-created if canvas element changes (tab switch replaces the DOM).
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1324–1394 — EQUATION SANITIZER  [KEY FUNCTION — core fix]
+────────────────────────────────────────────────────────────────────────────────
+  sanitizeGraphExpr(raw)
+
+  Purpose:
+    Normalises any user equation input into a form the graph engine understands.
+    Returns an object: { type, fn } or { type, xVal, label }
+
+  Return types:
+    { type: 'explicit', fn: '...' }
+      → Normal curve. fn is a clean expression of x. Graph plots y = fn.
+
+    { type: 'vertical', xVal: number, label: 'x = N' }
+      → Vertical line. Graph draws a vertical line at x = xVal.
+
+  Decision tree (in order):
+    1. No '=' in input
+       → { type:'explicit', fn: raw }
+       Example: "sin(x)" → explicit sin(x)
+
+    2. '=' present → split at first '=' into lhs and rhs
+
+    3. y = f(x)  (lhs is "y")
+       → { type:'explicit', fn: rhs }
+       Example: "y = 2x+5" → explicit 2x+5
+
+    4. f(x) = y  (rhs is "y")
+       → { type:'explicit', fn: lhs }
+       Example: "2x+5 = y" → explicit 2x+5
+
+    5. x = constant  (lhs is "x")
+       → evaluates rhs as a constant
+       → { type:'vertical', xVal: N, label: 'x = N' }
+       Example: "x = 3" → vertical at 3
+       Example: "x = -2.5" → vertical at -2.5
+
+    6. f(x) = g(x)  (rhs contains x)
+       → { type:'explicit', fn: '(lhs)-(rhs)' }
+       Plots the difference curve. Zero-crossings = solutions.
+       Example: "2x = x+1" → explicit (2x)-(x+1) → plots y = x-1
+
+    7. f(x) = constant  (rhs has no x)
+       a. Evaluate rhs → constant C
+       b. Build shiftedFn = "(lhs)-(C)"
+       c. Sample shiftedFn at x=0, x=1, x=2 → get f0, f1, f2
+       d. Compute second difference: |(f2-f1) - (f1-f0)|
+       e. If second difference < 1e-9 → expression is LINEAR
+          → slope = f1 - f0
+          → xSol = -f0 / slope  (exact analytical solution)
+          → { type:'vertical', xVal: xSol, label: 'x = N' }
+          Example: "2x+5 = 0" → f0=5, slope=2 → xSol=-2.5 → vertical at -2.5
+          Example: "5x-10 = 0" → f0=-10, slope=5 → xSol=2 → vertical at 2
+       f. If not linear (quadratic, trig, etc.) OR slope≈0
+          → { type:'explicit', fn: shiftedFn }
+          Plots shifted curve. User sees zero-crossings = solutions.
+          Example: "x^2-4 = 0" → explicit (x^2-4)-(0) → parabola, roots at ±2
+
+    8. Fallback (lhs has no x, or parse failure)
+       → { type:'explicit', fn: shiftedFn }
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1396–1437 — DRAW SHIM  [KEY FUNCTION]
+────────────────────────────────────────────────────────────────────────────────
+  drawGraph()
+    The bridge between the app's render engine and GraphEngine.
+    Called by: renderGraph (on tab open), graph-draw action (Plot button),
+               graph-reset action, Enter key in graph input field.
+
+    Steps:
+      1. Get canvas by id. If missing → return (tab not visible).
+      2. Create or reuse _ge singleton. Re-create if canvas changed.
+      3. Call sanitizeGraphExpr(_s.graphFn) → get parsed object.
+      4. Sync viewBox x-range from _s state.
+      5. Branch on parsed.type:
+
+         'vertical':
+           - Set default Y range ±10 (if user hasn't panned Y).
+           - Call _ge.setGraph(String(xVal), 'vertical', ...).
+           - Update #graph-plotting-as label: "plotting: x = N  (vertical line)"
+
+         'explicit':
+           - Call _ge.autoYRange(cleanFn) to auto-fit Y.
+           - Call _ge.setGraph(cleanFn, 'explicit', ...).
+           - Update label: "plotting: y = ..." only if expr was transformed.
+             (No label if user typed a plain expression with no equation signs.)
+
+    After setGraph, GraphEngine.invalidate() → requestRender() → rAF → draw.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1439–1683 — RENDER ENGINE
+────────────────────────────────────────────────────────────────────────────────
+  All functions here build HTML strings and inject into DOM via innerHTML.
+  This is intentional for simplicity — no virtual DOM, no framework.
+
+  renderNav() (L1442–1445)
+    Builds tab buttons from MODES object. Sets 'active' class on current mode.
+    Injects into #nav.
+
+  renderMemBar() (L1448–1452)
+    Updates only the memory value span in the existing mem-bar.
+    Shows "M = N" when set, "M: —" when empty.
+
+  updateDisplayOnly() (L1454–1471)
+    Targeted DOM update — updates ONLY:
+      #disp-val  → result value + error class
+      .validation-msg → live validation text
+      .paren-hint → unclosed paren warning
+      .display-reasoning → step display
+    FIX: does NOT call renderMain. Preserves textarea focus and cursor position.
+    Called from: textarea input events, handleKey, memOp(mr), del action.
+
+  renderMain() (L1473–1520)
+    Full re-render of #main-area content.
+    Clears innerHTML, rebuilds entire mode panel.
+    Dispatches to mode-specific render function.
+    For general/scientific: also calls attachEditorEvents() after injection.
+    FIX: Sets textarea value via ta.value not innerHTML (avoids HTML encoding).
+
+  renderHistoryHTML() (L1522–1535)
+    Returns HTML string for the history panel.
+    Shows up to 10 entries as clickable rows.
+    Each row: truncated expression left, result value right.
+
+  renderGraph(area) (L1537–1556)
+    Injects Graph tab HTML:
+      - Function input field + Plot button
+      - X-range inputs + Reset button
+      - Canvas wrapper (260px tall)
+      - #graph-plotting-as label div (shows sanitized expression)
+      - Graph info hint text
+      - History panel
+    Calls setTimeout(drawGraph, 30):
+      30ms delay ensures canvas has rendered into DOM before GraphEngine reads
+      its getBoundingClientRect size. Without this, size reads as 0×0.
+
+  renderUnits(area) (L1558–1578)
+    Unit conversion UI: category pills, value input, from/to selects with
+    swap button, result box.
+
+  renderEquations(area) (L1580–1618)
+    Equation solver UI: type tabs (linear/quadratic/cubic/stats).
+    Inputs vary by type (2 fields for linear, 3 for quadratic, 4 for cubic).
+    Stats tab shows a text input and live-updating stats grid.
+
+  renderFormulas(area) (L1620–1647)
+    Formula library: category filter buttons, scrollable list of formula cards.
+    Active formula card expands inline with variable inputs and Calculate button.
+
+  renderLoan / renderTax / renderTip (L1649–1681)
+    Simple utility calculators. All use the same #util-result result box.
+    All listen to input events and call computeUtil() with debounce.
+
+  render() (L1683)
+    Top-level: calls renderNav() + renderMain(). The full re-render.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1685–1761 — EDITOR EVENTS
+────────────────────────────────────────────────────────────────────────────────
+  attachEditorEvents() (L1689–1744)
+    Attaches to the textarea after it's injected by renderMain.
+    Must be re-called after every full render because innerHTML wipes listeners.
+
+    'input' listener:
+      Updates _s.expr from textarea value.
+      Gets autocomplete suggestions.
+      Live-evaluates expr and updates _s.result on valid parse.
+      Calls updateDisplayOnly() + renderAC() (no full render).
+      FIX: Never calls render() — preserves cursor/focus.
+
+    'keydown' listener:
+      With AC open:
+        ↑/↓      → navigate AC items
+        Tab/Enter → apply selected AC item
+        Escape    → close AC
+      Without AC:
+        ↑/↓      → navigate exprHistory (keyboard history)
+        Enter    → computeExpr()
+
+  updateACHighlight() (L1746–1748)
+    Toggles 'selected' class on .ac-item elements per _s.activeAC index.
+
+  applyAC(fn) (L1750–1761)
+    Replaces the trailing partial word in _s.expr with the chosen function name.
+    Updates textarea, dispatches synthetic 'input' event, focuses textarea.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1763–1817 — CALC ACTIONS
+────────────────────────────────────────────────────────────────────────────────
+  addToHistory(expr, val) (L1766–1773)
+    Skips "0" or "Error" results (no-op storage).
+    Truncates expr to 22 chars + ellipsis.
+    Prepends to _s.history (newest first), max 10 entries.
+    Saves to localStorage.
+    Also prepends to _s.exprHistory for ↑↓ keyboard nav (max 50).
+
+  computeExpr() (L1775–1788)
+    Evaluates _s.expr with ME.evaluate.
+    On error: sets _s.result to error message, _s.error=true.
+    On success: formats result, sets reasoning string, calls addToHistory.
+    Always sets _s.justEvaled=true.
+    Calls render() (full re-render — clears expression display for new entry).
+
+  handleKey(val) (L1790–1817)
+    Called from numpad button clicks.
+    If justEvaled AND val is a digit → clears expression (start fresh).
+    Otherwise appends val to _s.expr.
+    Sets justEvaled=false.
+    Evaluates new expr for live preview.
+    FIX: Updates textarea and display without full render if textarea exists.
+         Full render only if textarea not present (shouldn't happen in practice).
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1819–1863 — UTILITY CALCULATORS (Loan / Tax / Tip)
+────────────────────────────────────────────────────────────────────────────────
+  computeUtil() (L1820–1855)
+    150ms debounced from any input event in a utility mode.
+    Reads DOM input values, computes result, calls setUtil().
+
+    Loan EMI formula: (P × R × (1+R)^N) / ((1+R)^N - 1)
+      where R = annual_rate / 1200 (monthly decimal)
+      Also shows total payment and total interest.
+
+    Tax: income × rate% = tax. Net = income - tax.
+
+    Tip: (bill + tip%) / people = per-person amount.
+
+  setUtil(num, lbl, formula) (L1857–1863)
+    Updates the #util-result box's three text nodes.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1865–1933 — SPECIFIC COMPUTE FUNCTIONS
+────────────────────────────────────────────────────────────────────────────────
+  computeUnit() (L1865–1875)
+    Reads value, from-unit, to-unit from DOM.
+    Calls convertUnit(), shows result in #unit-result.
+
+  solveEq() (L1877–1891)
+    Reads coefficients from #eq-a/b/c/d inputs.
+    Calls appropriate solver function.
+    Updates #eq-res-num and #eq-res-formula.
+    Adds to history. Refreshes history panel HTML in-place.
+
+  updateStats() (L1893–1905)
+    Called on every keystroke in the stats input (150ms debounced).
+    Calls statsCalc(), builds stats grid HTML.
+    Shows "Enter numbers above" placeholder if empty.
+
+  calcFormula(idx) (L1907–1933)
+    Reads all .fml-var inputs for the active formula.
+    Replaces variable placeholders in formula expr via regex.
+    Evaluates with ME.evaluate.
+    Shows result in formula-specific result box.
+    Adds to history.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1935–1962 — CLIPBOARD + TOAST
+────────────────────────────────────────────────────────────────────────────────
+  copyResult() (L1938–1952)
+    Prefers navigator.clipboard.writeText (modern async API).
+    Falls back to document.execCommand('copy') with a temporary textarea.
+    Reads from #disp-val (calculator) or .res-num (utility panels).
+
+  toast(msg) (L1958–1962)
+    Shows the bottom toast notification.
+    Auto-hides after 2000ms via setTimeout.
+    Clears previous timer on rapid successive calls.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 1964–2093 — EVENT SYSTEM (bindEvents)
+────────────────────────────────────────────────────────────────────────────────
+  All events use event delegation on document (one listener, not per-element).
+  Elements declare data-action and data-val attributes.
+
+  Click handler (L1970–2043)
+    Finds closest [data-action] ancestor of click target.
+    Dispatches by action string:
+
+    set-mode     → reset calc state, call render()
+    toggle-theme → flip _s.theme, update data-theme attr, save to LS,
+                   if graph mode re-invalidate _ge for color update
+    copy-result  → copyResult()
+    key          → handleKey(v)
+    fn           → handleKey(v)  [same, but clears justEvaled first]
+    ac-pick      → applyAC(v)
+    del          → slice last char, update display
+    sign         → toggle leading minus
+    ac           → clear all, render  [note: 'ac' = All Clear, not autocomplete]
+    eq           → computeExpr()
+    mem          → memOp(v)
+    clear-history → clear history array, save, render
+    recall-hist  → restore history entry to expr input
+    graph-draw   → read input values → _s, call drawGraph()
+    graph-reset  → reset range to ±10, reset _ge viewBox, drawGraph()
+    unit-cat     → set _s.unitCat, render
+    unit-swap    → swap from/to selects, computeUnit()
+    eq-type      → set _s.eqType, render
+    solve-eq     → solveEq()
+    fml-cat      → set _s.formulaCat, render
+    fml-select   → toggle _s.activeFormula (accordion), render
+    fml-calc     → calcFormula(idx)
+
+  Keyboard handler (L2046–2064)
+    Only active in general/scientific modes.
+    Skips if focus is in an input/textarea.
+    Allowed keys: 0-9 . + - * / ^ % ( ) → handleKey
+    Enter → computeExpr
+    Backspace → delete last char
+    Escape → clear all
+
+  Input delegation (L2067–2076)
+    Catches all 'input' events on .card children.
+    Skips #expr-ta (handled by attachEditorEvents).
+    Debounces computeUtil, computeUnit, updateStats (150ms).
+
+  Graph Enter key (L2079–2089)
+    Separate keydown listener.
+    If Enter pressed while #graph-fn is focused → trigger drawGraph.
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 2095–2133 — PWA + INIT
+────────────────────────────────────────────────────────────────────────────────
+  setupPWA() (L2099–2118)
+    Listens for beforeinstallprompt → shows #pwa-banner.
+    Install button click → triggers native install prompt.
+    Hides banner after user responds.
+
+  init() (L2123–2133)
+    Boot sequence:
+      1. setupPWA()
+      2. Load saved theme from LS, apply to body
+      3. bindEvents()
+      4. render()  ← first paint
+      5. Register service worker (sw.js) — silent fail if not present
+
+  App.init exposed as the module's public API.
+  Called on DOMContentLoaded (L2138).
+
+
+────────────────────────────────────────────────────────────────────────────────
+  LINES 2141–2148 — FOOTER + CLOSING TAGS
+────────────────────────────────────────────────────────────────────────────────
+  Footer: "Crafted with care by Dusk Lab · dusklab.hq@gmail.com"
+  Styled inline (Inter font, muted gray, hover effect on email link).
+
+
+================================================================================
+  CHANGES MADE IN THIS SESSION (vs original test444.html)
+================================================================================
+
+  PROBLEM:
+    Graph engine was mishandling equation-style input (e.g. "2x+5=0").
+    The tokeniser skipped the "=" character silently. The original code
+    passed _s.graphFn raw to ME.evaluate, so "2x+5=0" tokenised as
+    "2x+5" (dropping "=0") but "2x" was sometimes only partially parsed,
+    producing wrong graphs (e.g. plotting y=2x instead of y=2x+5).
+
+  FIX 1 — Tokeniser lookahead (L303)
+    Changed /^(pi|e|x)\b/i to /^(pi|e|x)(?![a-zA-Z0-9_])/i
+    Reason: \b word boundary fails when 'x' follows a digit (e.g. in "2x"),
+    because both '2' and 'x' are \w characters. The negative lookahead
+    (?![a-zA-Z0-9_]) correctly detects the end of the constant token
+    regardless of what preceded it.
+
+  FIX 2 — sanitizeGraphExpr() function added (L1324–1394)
+    New function that intercepts all graph input before it reaches ME.evaluate.
+    Handles 7 distinct input patterns (see section above for full decision tree).
+    Most important cases:
+      "2x+5=0"  → detects linear, solves analytically → vertical line at x=-2.5
+      "y=2x+5"  → strips "y=" → plots diagonal line y=2x+5
+      "x=3"     → vertical line at x=3
+      "x^2=4"   → non-linear, plots shifted curve (parabola, roots at ±2)
+
+  FIX 3 — 'vertical' graph type added to GraphEngine (L1013–1017)
+    updateGraphs() now handles type='vertical'.
+    Stores xVal as string in g.fn.
+    Builds a 2-point segment from yMin-1 to yMax+1 at x=xVal.
+    drawGraph() strokes it like any other segment — uses existing canvas path.
+
+  FIX 4 — drawGraph() shim rewritten (L1396–1437)
+    Now calls sanitizeGraphExpr first.
+    Routes to vertical or explicit branch.
+    Shows #graph-plotting-as label to confirm what's being drawn.
+
+  FIX 5 — #graph-plotting-as label div added (L1551)
+    New <div> below the canvas shows "plotting: x = -2.5 (vertical line)"
+    or "plotting: y = 2x+5" when input was transformed.
+    Helps user understand what the engine interpreted.
+
+  FIX 6 — dblclick reset (L1305)
+    autoYRange call updated to use sanitizeGraphExpr().fn
+    so it gets a clean expression even if current _s.graphFn is an equation.
+
+  PREVIOUSLY FIXED (carried over from earlier session):
+    - requestIdleCallback usage in saveLS
+    - updateDisplayOnly separated from renderMain to preserve textarea focus
+    - handleKey unified for 'key' and 'fn' actions
+    - attachEditorEvents only updates AC dropdown, not full page
+    - textarea value set via .value not innerHTML (encoding fix)
+    - Removed duplicate 'ac' event case
+
+
+================================================================================
+  ARCHITECTURE NOTES FOR FUTURE YOU
+================================================================================
+
+  1. ALL graph input goes through sanitizeGraphExpr() first.
+     Never call ME.evaluate or _ge.setGraph with raw _s.graphFn.
+
+  2. GraphEngine is stateful. _ge persists across plot calls.
+     It is only recreated when the canvas DOM element changes
+     (which happens on tab switch because renderMain() replaces innerHTML).
+
+  3. The 30ms setTimeout in renderGraph() is load-bearing.
+     The canvas needs to be in the DOM and laid out before GraphEngine
+     can read its size. Removing it causes 0×0 canvas bugs.
+
+  4. render() = full re-render. Expensive. Only call from:
+     - Mode switches (set-mode)
+     - computeExpr (= button)
+     - Clear (ac action)
+     - Tab-level state changes (eq-type, fml-cat, etc.)
+     For everything in the calculator: use updateDisplayOnly() + renderAC().
+
+  5. The math engine uses degrees for sin/cos/tan in the calculator.
+     The graph engine converts to radians via _toRadFn() before sampling.
+     This is intentional — the two contexts have different conventions.
+     Do not change this without updating both the ME.FNS table and _toRadFn.
+
+  6. sanitizeGraphExpr linearity detection works by sampling at x=0,1,2.
+     It assumes the expression is defined at all three points.
+     Edge cases where f(0) or f(1) is undefined (e.g. 1/x = 0) fall through
+     to the 'explicit' branch and plot the curve instead. This is safe.
+
+  7. History is capped at 10 display entries, 50 keyboard nav entries.
+     Both are arrays in _s, history also persisted to localStorage as 'sc3_hist'.
+
+================================================================================
+  END OF DOCUMENT
+  Dusk Lab — stay poor, stay pure.
+================================================================================
